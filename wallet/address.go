@@ -20,3 +20,12 @@ func ValidateAddress(address string, acceptOffCurve bool) error {
 
 	return nil
 }
+
+func PublicKeyFromAddress(address string) (solana.PublicKey, error) {
+	pubKey, err := solana.PublicKeyFromBase58(address)
+	if err != nil {
+		return solana.PublicKey{}, fmt.Errorf("invalid address: %w", err)
+	}
+
+	return pubKey, nil
+}
