@@ -182,5 +182,5 @@ func (p *Provider) RequestSolAirdrop(
 	address solana.PublicKey,
 	amount uint64,
 ) (solana.Signature, error) {
-	return p.client.RequestAirdrop(ctx, address, amount, rpc.CommitmentFinalized)
+	return p.rpcClient.RequestAirdrop(ctx, address, amount, rpc.CommitmentFinalized)
 }
