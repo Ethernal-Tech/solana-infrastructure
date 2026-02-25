@@ -1,14 +1,23 @@
 package sendtx
 
-import "github.com/gagliardetto/solana-go"
+import (
+	"fmt"
+
+	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
+	"github.com/gagliardetto/solana-go"
+)
+
+type InstructionType string
+
+const (
+	InstructionTypeBridgingRequest   InstructionType = "bridge_request"
+	InstructionTypeBridgeTransaction InstructionType = "bridge_transaction"
+)
 
 type InstructionConfig struct {
-	bridgingTxDto BridgingTxDto
+	programKeyPair solana.PrivateKey
 
-	bridgingBatchID uint64
-	instructionSeed []byte
 	validatorSetPDA solana.PublicKey
-	bridgingPDA     solana.PublicKey
 	vaultPDA        solana.PublicKey
 
 	tokenProgramID                     solana.PublicKey
@@ -18,10 +27,8 @@ type InstructionConfig struct {
 
 type InstructionConfigOption func(c *InstructionConfig)
 
-func NewInstructionConfig(bridgingTxDto BridgingTxDto, options ...InstructionConfigOption) *InstructionConfig {
-	cfg := &InstructionConfig{
-		bridgingTxDto: bridgingTxDto,
-	}
+func NewInstructionConfig(options ...InstructionConfigOption) *InstructionConfig {
+	cfg := &InstructionConfig{}
 
 	for _, option := range options {
 		option(cfg)
@@ -30,27 +37,48 @@ func NewInstructionConfig(bridgingTxDto BridgingTxDto, options ...InstructionCon
 	return cfg
 }
 
-func WithBridgingBatchID(bridgingBatchID uint64) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.bridgingBatchID = bridgingBatchID
+func (c *InstructionConfig) Validate() error {
+	var errs []error
+
+	// Check required fields
+	if !c.programKeyPair.IsValid() {
+		errs = append(errs, fmt.Errorf("programKeyPair is required"))
 	}
+
+	if err := wallet.ValidatePublicKey(c.validatorSetPDA, true); err != nil {
+		errs = append(errs, fmt.Errorf("validatorSetPDA is invalid: %w", err))
+	}
+
+	if err := wallet.ValidatePublicKey(c.vaultPDA, true); err != nil {
+		errs = append(errs, fmt.Errorf("vaultPDA is invalid: %w", err))
+	}
+
+	if c.tokenProgramID != solana.TokenProgramID {
+		errs = append(errs, fmt.Errorf("tokenProgramID must be the default Solana Token Program ID"))
+	}
+
+	if c.systemProgramID != solana.SystemProgramID {
+		errs = append(errs, fmt.Errorf("systemProgramID must be the default Solana System Program ID"))
+	}
+
+	if c.SPLAssociatedTokenAccountProgramID != solana.SPLAssociatedTokenAccountProgramID {
+		errs = append(errs, fmt.Errorf("SPLAssociatedTokenAccountProgramID must be the default Solana SPL Associated Token Account Program ID"))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation failed: %w", errs[0])
+	}
+
+	return nil
 }
 
-func WithInstructionSeed(instructionSeed []byte) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.instructionSeed = instructionSeed
-	}
+func (c *InstructionConfig) GetProgramID() solana.PublicKey {
+	return c.programKeyPair.PublicKey()
 }
 
 func WithValidatorSetPDA(validatorSetPDA solana.PublicKey) InstructionConfigOption {
 	return func(c *InstructionConfig) {
 		c.validatorSetPDA = validatorSetPDA
-	}
-}
-
-func WithBridgingPDA(bridgingPDA solana.PublicKey) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.bridgingPDA = bridgingPDA
 	}
 }
 

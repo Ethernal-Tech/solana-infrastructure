@@ -2,23 +2,32 @@ package wallet
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/ws"
 )
 
 type Provider struct {
-	client *rpc.Client
+	rpcClient *rpc.Client
+	wsClient  *ws.Client
 }
 
-func NewProvider(endpoint string) *Provider {
-	return &Provider{
-		client: rpc.New(endpoint),
+func NewProvider(endpoint string) (*Provider, error) {
+	wsCli, err := ws.Connect(context.Background(), rpc.LocalNet_WS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to localnet: %w", err)
 	}
+
+	return &Provider{
+		rpcClient: rpc.New(endpoint),
+		wsClient:  wsCli,
+	}, nil
 }
 
 func (p *Provider) GetBalance(ctx context.Context, pubkey solana.PublicKey) (uint64, error) {
-	out, err := p.client.GetBalance(
+	out, err := p.rpcClient.GetBalance(
 		ctx,
 		pubkey,
 		rpc.CommitmentConfirmed,
@@ -32,7 +41,7 @@ func (p *Provider) GetBalance(ctx context.Context, pubkey solana.PublicKey) (uin
 }
 
 func (p *Provider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error) {
-	return p.client.GetAccountInfoWithOpts(
+	return p.rpcClient.GetAccountInfoWithOpts(
 		ctx,
 		pubkey,
 		&rpc.GetAccountInfoOpts{
@@ -43,7 +52,7 @@ func (p *Provider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) 
 }
 
 func (p *Provider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) {
-	res, err := p.client.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	res, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
 		return solana.Hash{}, err
 	}
@@ -52,7 +61,7 @@ func (p *Provider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) 
 }
 
 func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
-	return p.client.SendTransactionWithOpts(
+	return p.rpcClient.SendTransactionWithOpts(
 		ctx,
 		tx,
 		rpc.TransactionOpts{
@@ -62,8 +71,35 @@ func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) 
 	)
 }
 
-func (p *Provider) GetSignatureStatus(ctx context.Context, sig solana.Signature) (*rpc.GetSignatureStatusesResult, error) {
-	return p.client.GetSignatureStatuses(
+func (p *Provider) ExecuteInstruction(
+	ctx context.Context, ix *solana.Instruction,
+	feePayer solana.PrivateKey) (*solana.Signature, error) {
+	blockHash, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest blockhash: %w", err)
+	}
+
+	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(blockHash.Value.Blockhash).
+		SetFeePayer(feePayer.PublicKey()).AddInstruction(*ix).Build()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transaction: %w", err)
+	}
+
+	signature, err := p.rpcClient.SendTransaction(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send transaction: %w", err)
+	}
+
+	if err = p.WaitForSignature(signature, rpc.CommitmentFinalized); err != nil {
+		return nil, fmt.Errorf("error while waiting for signature: %w", err)
+	}
+
+	return &signature, nil
+}
+
+func (p *Provider) GetSignatureStatus(
+	ctx context.Context, sig solana.Signature) (*rpc.GetSignatureStatusesResult, error) {
+	return p.rpcClient.GetSignatureStatuses(
 		ctx,
 		true,
 		sig,
@@ -71,15 +107,15 @@ func (p *Provider) GetSignatureStatus(ctx context.Context, sig solana.Signature)
 }
 
 func (p *Provider) GetSlot(ctx context.Context) (uint64, error) {
-	return p.client.GetSlot(ctx, rpc.CommitmentConfirmed)
+	return p.rpcClient.GetSlot(ctx, rpc.CommitmentConfirmed)
 }
 
 func (p *Provider) GetBlockHeight(ctx context.Context) (uint64, error) {
-	return p.client.GetBlockHeight(ctx, rpc.CommitmentFinalized)
+	return p.rpcClient.GetBlockHeight(ctx, rpc.CommitmentFinalized)
 }
 
 func (p *Provider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResult, error) {
-	return p.client.GetBlockWithOpts(
+	return p.rpcClient.GetBlockWithOpts(
 		ctx,
 		slot,
 		&rpc.GetBlockOpts{
@@ -89,11 +125,8 @@ func (p *Provider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResu
 }
 
 func (p *Provider) GetTransaction(
-	ctx context.Context,
-	sig solana.Signature,
-) (*rpc.GetTransactionResult, error) {
-
-	return p.client.GetTransaction(
+	ctx context.Context, sig solana.Signature) (*rpc.GetTransactionResult, error) {
+	return p.rpcClient.GetTransaction(
 		ctx,
 		sig,
 		&rpc.GetTransactionOpts{
@@ -103,12 +136,8 @@ func (p *Provider) GetTransaction(
 }
 
 func (p *Provider) GetSignaturesForAddress(
-	ctx context.Context,
-	address solana.PublicKey,
-	limit int,
-) ([]*rpc.TransactionSignature, error) {
-
-	return p.client.GetSignaturesForAddressWithOpts(
+	ctx context.Context, address solana.PublicKey, limit int) ([]*rpc.TransactionSignature, error) {
+	return p.rpcClient.GetSignaturesForAddressWithOpts(
 		ctx,
 		address,
 		&rpc.GetSignaturesForAddressOpts{
@@ -121,11 +150,26 @@ func (p *Provider) SimulateTransaction(
 	ctx context.Context,
 	tx *solana.Transaction,
 ) (*rpc.SimulateTransactionResponse, error) {
-	return p.client.SimulateTransactionWithOpts(
+	return p.rpcClient.SimulateTransactionWithOpts(
 		ctx,
 		tx,
 		&rpc.SimulateTransactionOpts{
 			SigVerify: false,
 		},
 	)
+}
+
+func (p *Provider) WaitForSignature(sig solana.Signature, commitment rpc.CommitmentType) error {
+	sub, err := p.wsClient.SignatureSubscribe(sig, commitment)
+	if err != nil {
+		return err
+	}
+	defer sub.Unsubscribe()
+
+	rd := <-sub.Response()
+	if rd.Value.Err != nil {
+		return fmt.Errorf("transaction failed: %v", rd.Value.Err)
+	}
+
+	return nil
 }
