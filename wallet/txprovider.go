@@ -98,7 +98,10 @@ func (p *Provider) ExecuteInstruction(
 }
 
 func (p *Provider) GetSignatureStatus(
-	ctx context.Context, sig solana.Signature) (*rpc.GetSignatureStatusesResult, error) {
+
+	ctx context.Context,
+	sig solana.Signature,
+) (*rpc.GetSignatureStatusesResult, error) {
 	return p.rpcClient.GetSignatureStatuses(
 		ctx,
 		true,
@@ -172,4 +175,12 @@ func (p *Provider) WaitForSignature(sig solana.Signature, commitment rpc.Commitm
 	}
 
 	return nil
+}
+
+func (p *Provider) RequestSolAirdrop(
+	ctx context.Context,
+	address solana.PublicKey,
+	amount uint64,
+) (solana.Signature, error) {
+	return p.client.RequestAirdrop(ctx, address, amount, rpc.CommitmentFinalized)
 }
