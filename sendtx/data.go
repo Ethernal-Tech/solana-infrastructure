@@ -33,3 +33,16 @@ type BridgeTransactionDto struct {
 	Receivers  []BridgingTxReceiver
 	BatchID    uint64
 }
+
+type BridgeVSUDto struct {
+	SenderAddr             string
+	AddingValidatorAddrs   []string
+	RemovingValidatorAddrs []string
+	BatchID                uint64
+}
+
+type InitializeDto struct {
+	SenderAddr string
+	Validators []string
+	LastID     uint64
+}

@@ -79,7 +79,8 @@ func checkFees(config ChainConfig, bridgingFee, operationFee uint64) error {
 	return nil
 }
 
-func (txSnd *TxSender) buildInstruction(instructionType InstructionType, txDto interface{}) (solana.Instruction, error) {
+func (txSnd *TxSender) buildInstruction(
+	instructionType InstructionType, txDto interface{}) (solana.Instruction, error) {
 	switch instructionType {
 	case InstructionTypeBridgingRequest:
 		tx, ok := txDto.(BridgeRequestDto)
@@ -95,6 +96,20 @@ func (txSnd *TxSender) buildInstruction(instructionType InstructionType, txDto i
 		}
 
 		return txSnd.buildBridgeTransactionInstruction(tx)
+	case InstructionTypeBridgeVsu:
+		tx, ok := txDto.(BridgeVSUDto)
+		if !ok {
+			return nil, fmt.Errorf("expected BridgeVSUDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildBridgeVSUInstruction(tx)
+	case InstructionTypeInitialize:
+		tx, ok := txDto.(InitializeDto)
+		if !ok {
+			return nil, fmt.Errorf("expected InitializeDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildInitializeInstruction(tx)
 	default:
 		return nil, fmt.Errorf("unsupported transaction type: %s", instructionType)
 	}
@@ -149,7 +164,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		receiver.TokenAmount.TokenMint,
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
-		txSnd.instructionConfig.SPLAssociatedTokenAccountProgramID,
+		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
 	)
 }
 
@@ -206,6 +221,100 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		vaultAta,
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
-		txSnd.instructionConfig.SPLAssociatedTokenAccountProgramID,
+		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
+	)
+}
+
+func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instruction, error) {
+	if err := wallet.ValidateAddress(tx.SenderAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid sender address: %w", err)
+	}
+
+	addingValidatorPubKeys := make([]solana.PublicKey, len(tx.AddingValidatorAddrs))
+	removingValidatorPubKeys := make([]solana.PublicKey, len(tx.RemovingValidatorAddrs))
+
+	for i, addingValidator := range tx.AddingValidatorAddrs {
+		if err := wallet.ValidateAddress(addingValidator, true); err != nil {
+			return nil, fmt.Errorf("invalid adding validator address %s: %w", addingValidator, err)
+		}
+
+		addingKey, err := wallet.PublicKeyFromAddress(addingValidator)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse adding validator public key: %w", err)
+		}
+
+		addingValidatorPubKeys[i] = addingKey
+	}
+
+	for i, removingValidator := range tx.RemovingValidatorAddrs {
+		if err := wallet.ValidateAddress(removingValidator, true); err != nil {
+			return nil, fmt.Errorf("invalid removing validator address %s: %w", removingValidator, err)
+		}
+
+		removingKey, err := wallet.PublicKeyFromAddress(removingValidator)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse removing validator public key: %w", err)
+		}
+
+		removingValidatorPubKeys[i] = removingKey
+	}
+
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
+	}
+
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, 1)
+
+	validatorSetChangePda, _, err := solana.FindProgramAddress(
+		[][]byte{skyline_program.VALIDATOR_SET_CHANGE_SEED, buf}, txSnd.instructionConfig.programKeyPair.PublicKey())
+	if err != nil {
+		return nil, fmt.Errorf("failed to find validator set change PDA: %w", err)
+	}
+
+	return skyline_program.NewBridgeVsuInstruction(
+		addingValidatorPubKeys,
+		removingValidatorPubKeys,
+		tx.BatchID,
+		senderPubKey,
+		txSnd.instructionConfig.validatorSetPDA,
+		validatorSetChangePda,
+		txSnd.instructionConfig.systemProgramID,
+	)
+}
+
+func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Instruction, error) {
+	if err := wallet.ValidateAddress(tx.SenderAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid sender address: %w", err)
+	}
+
+	validatorPubKeys := make([]solana.PublicKey, len(tx.Validators))
+
+	for i, validatorAddr := range tx.Validators {
+		if err := wallet.ValidateAddress(validatorAddr, true); err != nil {
+			return nil, fmt.Errorf("invalid validator address %s: %w", validatorAddr, err)
+		}
+
+		validatorKey, err := wallet.PublicKeyFromAddress(validatorAddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse public key for validator address %s: %w", validatorAddr, err)
+		}
+
+		validatorPubKeys[i] = validatorKey
+	}
+
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
+	}
+
+	return skyline_program.NewInitializeInstruction(
+		validatorPubKeys,
+		&tx.LastID,
+		senderPubKey,
+		txSnd.instructionConfig.validatorSetPDA,
+		txSnd.instructionConfig.vaultPDA,
+		txSnd.instructionConfig.systemProgramID,
 	)
 }

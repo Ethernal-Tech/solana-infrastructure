@@ -12,6 +12,8 @@ type InstructionType string
 const (
 	InstructionTypeBridgingRequest   InstructionType = "bridge_request"
 	InstructionTypeBridgeTransaction InstructionType = "bridge_transaction"
+	InstructionTypeBridgeVsu         InstructionType = "bridge_vsu"
+	InstructionTypeInitialize        InstructionType = "bridge_initialize"
 )
 
 type InstructionConfig struct {
@@ -22,7 +24,7 @@ type InstructionConfig struct {
 
 	tokenProgramID                     solana.PublicKey
 	systemProgramID                    solana.PublicKey
-	SPLAssociatedTokenAccountProgramID solana.PublicKey
+	splAssociatedTokenAccountProgramID solana.PublicKey
 }
 
 type InstructionConfigOption func(c *InstructionConfig)
@@ -61,8 +63,9 @@ func (c *InstructionConfig) Validate() error {
 		errs = append(errs, fmt.Errorf("systemProgramID must be the default Solana System Program ID"))
 	}
 
-	if c.SPLAssociatedTokenAccountProgramID != solana.SPLAssociatedTokenAccountProgramID {
-		errs = append(errs, fmt.Errorf("SPLAssociatedTokenAccountProgramID must be the default Solana SPL Associated Token Account Program ID"))
+	if c.splAssociatedTokenAccountProgramID != solana.SPLAssociatedTokenAccountProgramID {
+		errs = append(errs,
+			fmt.Errorf("SPLAssociatedTokenAccountProgramID must be the default Solana SPL Associated Token Account Program ID"))
 	}
 
 	if len(errs) > 0 {
@@ -103,6 +106,6 @@ func WithSystemProgramID(systemProgramID solana.PublicKey) InstructionConfigOpti
 func WithSPLAssociatedTokenAccountProgramID(
 	splAssociatedTokenAccountProgramID solana.PublicKey) InstructionConfigOption {
 	return func(c *InstructionConfig) {
-		c.SPLAssociatedTokenAccountProgramID = splAssociatedTokenAccountProgramID
+		c.splAssociatedTokenAccountProgramID = splAssociatedTokenAccountProgramID
 	}
 }
