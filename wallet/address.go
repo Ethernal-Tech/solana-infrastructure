@@ -35,7 +35,7 @@ func ValidatePublicKey(pubKey solana.PublicKey, acceptOffCurve bool) error {
 	}
 
 	if !acceptOffCurve && !pubKey.IsOnCurve() {
-		return fmt.Errorf("invalid address: public key is off-curve")
+		return fmt.Errorf("invalid public key: public key is off-curve")
 	}
 
 	return nil

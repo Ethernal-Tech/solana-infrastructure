@@ -2,14 +2,16 @@ package sendtx
 
 import (
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
+	"github.com/gagliardetto/solana-go"
 )
 
 type ChainConfig struct {
-	MultiSigAddress       string
 	MinAmountToBridge     uint64
 	MinFeeForBridging     uint64
 	MinOperationFeeAmount uint64
-	Tokens                map[uint16]wallet.TokenAmount
+	TreasuryAddress       solana.PublicKey
+	BridgingFeeAddress    solana.PublicKey
+	CurrencyTokenID       uint16
 }
 
 type BridgingTxReceiver struct {

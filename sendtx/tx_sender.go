@@ -32,6 +32,14 @@ func NewTxSender(txProvider SenderTxProvider,
 		return nil, fmt.Errorf("invalid instruction config: %w", err)
 	}
 
+	if err := wallet.ValidatePublicKey(chainConfig.TreasuryAddress, false); err != nil {
+		return nil, fmt.Errorf("invalid treasury address %v in chain config: %w", chainConfig.TreasuryAddress, err)
+	}
+
+	if err := wallet.ValidatePublicKey(chainConfig.BridgingFeeAddress, false); err != nil {
+		return nil, fmt.Errorf("invalid bridging fee address %v in chain config: %w", chainConfig.BridgingFeeAddress, err)
+	}
+
 	txSnd := &TxSender{
 		txProvider:        txProvider,
 		chainConfig:       chainConfig,
@@ -152,10 +160,17 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		return nil, fmt.Errorf("failed to find vault associated token account: %w", err)
 	}
 
+	feeConfigPda, _, err := solana.FindProgramAddress(
+		[][]byte{skyline_program.FEE_CONFIG_SEED}, txSnd.instructionConfig.programKeyPair.PublicKey())
+	if err != nil {
+		return nil, fmt.Errorf("failed to find bridging transaction PDA: %w", err)
+	}
+
 	return skyline_program.NewBridgeRequestInstruction(
 		receiver.TokenAmount.Amount,
 		[]byte(receiver.Addr),
 		tx.DstChainID,
+		tx.BridgingFee+tx.OperationFee,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		senderAta,
@@ -165,6 +180,9 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
+		feeConfigPda,
+		txSnd.chainConfig.TreasuryAddress,
+		txSnd.chainConfig.BridgingFeeAddress,
 	)
 }
 
@@ -309,12 +327,25 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
+	feeConfigPda, _, err := solana.FindProgramAddress(
+		[][]byte{skyline_program.FEE_CONFIG_SEED}, txSnd.instructionConfig.programKeyPair.PublicKey())
+	if err != nil {
+		return nil, fmt.Errorf("failed to find bridging transaction PDA: %w", err)
+	}
+
 	return skyline_program.NewInitializeInstruction(
 		validatorPubKeys,
 		&tx.LastID,
+		txSnd.chainConfig.MinOperationFeeAmount,
+		txSnd.chainConfig.MinFeeForBridging,
+		txSnd.minAmountToBridge,
+		txSnd.chainConfig.CurrencyTokenID,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.vaultPDA,
+		feeConfigPda,
+		txSnd.chainConfig.TreasuryAddress,
+		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,
 	)
 }

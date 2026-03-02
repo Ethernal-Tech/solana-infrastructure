@@ -15,6 +15,12 @@ import (
 func TestNewTxSender(t *testing.T) {
 	mockProvider := new(MockSenderTxProvider)
 
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
 
@@ -30,7 +36,10 @@ func TestNewTxSender(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 
@@ -51,7 +60,10 @@ func TestNewTxSender(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 
@@ -70,7 +82,10 @@ func TestNewTxSender(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 
@@ -84,7 +99,10 @@ func TestNewTxSender(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			InstructionConfig{
 				vaultPDA:                           solana.NewWallet().PublicKey(),
 				validatorSetPDA:                    solana.NewWallet().PublicKey(),
@@ -105,10 +123,62 @@ func TestNewTxSender(t *testing.T) {
 
 		require.Error(t, err, "unsupported transaction type")
 	})
+
+	t.Run("invalid treasury address", func(t *testing.T) {
+		instructionConfig := InstructionConfig{
+			vaultPDA:                           solana.NewWallet().PublicKey(),
+			validatorSetPDA:                    solana.NewWallet().PublicKey(),
+			tokenProgramID:                     solana.TokenProgramID,
+			systemProgramID:                    solana.SystemProgramID,
+			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
+			programKeyPair:                     programKeyPair,
+		}
+
+		txSender, err := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    solana.PublicKey{},
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		require.Error(t, err, "invalid treasury address")
+		require.Nil(t, txSender)
+	})
+
+	t.Run("invalid bridging fee address", func(t *testing.T) {
+		instructionConfig := InstructionConfig{
+			vaultPDA:                           solana.NewWallet().PublicKey(),
+			validatorSetPDA:                    solana.NewWallet().PublicKey(),
+			tokenProgramID:                     solana.TokenProgramID,
+			systemProgramID:                    solana.SystemProgramID,
+			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
+			programKeyPair:                     programKeyPair,
+		}
+
+		txSender, err := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: solana.PublicKey{},
+			},
+			instructionConfig,
+		)
+
+		require.Error(t, err, "invalid bridging fee address")
+		require.Nil(t, txSender)
+	})
 }
 
 func TestBridgingRequest(t *testing.T) {
 	mockProvider := new(MockSenderTxProvider)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
 
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
@@ -152,7 +222,11 @@ func TestBridgingRequest(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{MinAmountToBridge: 0},
+			ChainConfig{
+				MinAmountToBridge:  0,
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -203,8 +277,10 @@ func TestBridgingRequest(t *testing.T) {
 		txSender, err := NewTxSender(
 			mockProvider,
 			ChainConfig{
-				MinAmountToBridge: 1_000_000_000,
-				MinFeeForBridging: 1_000_000_000,
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+				MinAmountToBridge:  1_000_000_000,
+				MinFeeForBridging:  1_000_000_000,
 			},
 			instructionConfig,
 		)
@@ -256,8 +332,10 @@ func TestBridgingRequest(t *testing.T) {
 		txSender, err := NewTxSender(
 			mockProvider,
 			ChainConfig{
-				MinAmountToBridge: 1_000_000_000,
-				MinFeeForBridging: 1_000_000_000,
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+				MinAmountToBridge:  1_000_000_000,
+				MinFeeForBridging:  1_000_000_000,
 			},
 			instructionConfig,
 		)
@@ -309,6 +387,8 @@ func TestBridgingRequest(t *testing.T) {
 		txSender, err := NewTxSender(
 			mockProvider,
 			ChainConfig{
+				TreasuryAddress:       treasuryWallet.PublicKey,
+				BridgingFeeAddress:    feeWallet.PublicKey,
 				MinAmountToBridge:     1_000_000_000,
 				MinFeeForBridging:     1_000_000_000,
 				MinOperationFeeAmount: 1_000_000_000,
@@ -335,7 +415,10 @@ func TestBridgingRequest(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			InstructionConfig{
 				vaultPDA:                           solana.NewWallet().PublicKey(),
 				validatorSetPDA:                    solana.NewWallet().PublicKey(),
@@ -379,7 +462,10 @@ func TestBridgingRequest(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			InstructionConfig{
 				vaultPDA:                           solana.NewWallet().PublicKey(),
 				validatorSetPDA:                    solana.NewWallet().PublicKey(),
@@ -454,7 +540,10 @@ func TestBridgingRequest(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -499,7 +588,11 @@ func TestBridgingRequest(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{MinAmountToBridge: 0},
+			ChainConfig{
+				MinAmountToBridge:  0,
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -519,6 +612,12 @@ func TestBridgingRequest(t *testing.T) {
 
 func TestBridgingTransaction(t *testing.T) {
 	mockProvider := new(MockSenderTxProvider)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
 
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
@@ -563,7 +662,10 @@ func TestBridgingTransaction(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -586,7 +688,10 @@ func TestBridgingTransaction(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			InstructionConfig{
 				vaultPDA:                           solana.NewWallet().PublicKey(),
 				validatorSetPDA:                    solana.NewWallet().PublicKey(),
@@ -631,7 +736,10 @@ func TestBridgingTransaction(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			InstructionConfig{
 				vaultPDA:                           solana.NewWallet().PublicKey(),
 				validatorSetPDA:                    solana.NewWallet().PublicKey(),
@@ -674,7 +782,10 @@ func TestBridgingTransaction(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			InstructionConfig{
 				vaultPDA:                           solana.NewWallet().PublicKey(),
 				validatorSetPDA:                    solana.NewWallet().PublicKey(),
@@ -715,6 +826,12 @@ func TestBridgingTransaction(t *testing.T) {
 func TestBridgeVSU(t *testing.T) {
 	mockProvider := new(MockSenderTxProvider)
 
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
 
@@ -751,7 +868,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -792,7 +912,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -834,7 +957,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -857,7 +983,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -895,7 +1024,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -924,7 +1056,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -953,7 +1088,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -982,7 +1120,10 @@ func TestBridgeVSU(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1017,6 +1158,12 @@ func TestBridgeVSU(t *testing.T) {
 
 func TestInitialize(t *testing.T) {
 	mockProvider := new(MockSenderTxProvider)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
 
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
@@ -1057,7 +1204,10 @@ func TestInitialize(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1096,7 +1246,10 @@ func TestInitialize(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1130,7 +1283,10 @@ func TestInitialize(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1150,7 +1306,10 @@ func TestInitialize(t *testing.T) {
 	t.Run("invalid DTO type", func(t *testing.T) {
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1185,7 +1344,10 @@ func TestInitialize(t *testing.T) {
 	t.Run("invalid sender address", func(t *testing.T) {
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1211,7 +1373,10 @@ func TestInitialize(t *testing.T) {
 	t.Run("invalid validator address", func(t *testing.T) {
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
@@ -1255,7 +1420,10 @@ func TestInitialize(t *testing.T) {
 
 		txSender, err := NewTxSender(
 			mockProvider,
-			ChainConfig{},
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
 			instructionConfig,
 		)
 		require.NoError(t, err)
