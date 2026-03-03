@@ -85,7 +85,20 @@ func (p *Provider) ExecuteInstruction(
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
 
-	signature, err := p.rpcClient.SendTransaction(ctx, tx)
+	_, err = tx.Sign(func(pubkey solana.PublicKey) *solana.PrivateKey {
+		if pubkey.Equals(feePayer.PublicKey()) {
+			return &feePayer
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign transaction: %w", err)
+	}
+
+	signature, err := p.rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
+		SkipPreflight:       false,
+		PreflightCommitment: rpc.CommitmentConfirmed,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to send transaction: %w", err)
 	}

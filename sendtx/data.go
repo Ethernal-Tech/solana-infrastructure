@@ -48,3 +48,23 @@ type InitializeDto struct {
 	Validators []string
 	LastID     uint64
 }
+
+type SOLTransferDto struct {
+	SenderPublicKey   string
+	ReceiverPublicKey string
+	Amount            uint64
+}
+
+type SPLTransferDto struct {
+	SenderPublicKey   string
+	ReceiverPublicKey string
+	Amount            uint64
+	MintTokenAddress  string
+	TokenDecimals     uint8
+}
+
+type CreateInstructionDto struct {
+	SenderPublicKey   string
+	MintTokenAddress  string
+	ReceiverPublicKey string
+}

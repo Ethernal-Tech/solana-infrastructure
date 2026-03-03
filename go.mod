@@ -7,10 +7,12 @@ require (
 	github.com/gagliardetto/anchor-go v1.0.0
 	github.com/gagliardetto/binary v0.8.0
 	github.com/gagliardetto/solana-go v1.14.0
+	github.com/hashicorp/go-hclog v1.6.3
 	github.com/quasilyte/go-ruleguard v0.4.5
 	github.com/quasilyte/go-ruleguard/dsl v0.3.23
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/test-go/testify v1.1.4
+	go.etcd.io/bbolt v1.4.3
 	golang.org/x/tools v0.30.0
 )
 
@@ -27,7 +29,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/rpc v1.2.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
-	github.com/hashicorp/go-hclog v1.6.3 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect

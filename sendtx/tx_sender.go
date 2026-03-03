@@ -9,6 +9,9 @@ import (
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
+	associatedtokenaccount "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	"github.com/gagliardetto/solana-go/programs/system"
+	"github.com/gagliardetto/solana-go/programs/token"
 )
 
 type SenderTxProvider interface {
@@ -64,7 +67,7 @@ func (txSnd *TxSender) CreateTx(
 
 	signature, err := txSnd.sendTransaction(ctx, instruction, solanaWallet)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send bridging request transaction: %w", err)
+		return nil, fmt.Errorf("failed to send %s transaction: %w", instructionType, err)
 	}
 
 	return signature, nil
@@ -118,6 +121,27 @@ func (txSnd *TxSender) buildInstruction(
 		}
 
 		return txSnd.buildInitializeInstruction(tx)
+	case InstructionTypeSOLTransfer:
+		tx, ok := txDto.(SOLTransferDto)
+		if !ok {
+			return nil, fmt.Errorf("expected TransferDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildTransferInstruction(tx)
+	case InstructionTypeSPLTransfer:
+		tx, ok := txDto.(SPLTransferDto)
+		if !ok {
+			return nil, fmt.Errorf("expected SPLTransferDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildSPLTransferInstruction(tx)
+	case InstructionCreateInstruction:
+		tx, ok := txDto.(CreateInstructionDto)
+		if !ok {
+			return nil, fmt.Errorf("expected CreateInstructionDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildCreateInstruction(tx)
 	default:
 		return nil, fmt.Errorf("unsupported transaction type: %s", instructionType)
 	}
@@ -348,4 +372,80 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,
 	)
+}
+
+func (txSnd *TxSender) buildTransferInstruction(tx SOLTransferDto) (solana.Instruction, error) {
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
+	}
+
+	receiverPubKey, err := wallet.PublicKeyFromAddress(tx.ReceiverPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse receiver public key: %w", err)
+	}
+
+	return system.NewTransferInstruction(
+		tx.Amount,
+		senderPubKey,
+		receiverPubKey,
+	).Build(), nil
+}
+
+func (txSnd *TxSender) buildSPLTransferInstruction(tx SPLTransferDto) (solana.Instruction, error) {
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
+	}
+
+	receiverPubKey, err := wallet.PublicKeyFromAddress(tx.ReceiverPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse receiver public key: %w", err)
+	}
+
+	mintTokenAddress, err := wallet.PublicKeyFromAddress(tx.MintTokenAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse mint token address: %w", err)
+	}
+
+	sourceAta, _, err := wallet.FindAssociatedTokenAddress(senderPubKey, mintTokenAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find source associated token address: %w", err)
+	}
+
+	destinationAta, _, err := wallet.FindAssociatedTokenAddress(receiverPubKey, mintTokenAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find destination associated token address: %w", err)
+	}
+
+	return token.NewTransferInstruction(
+		tx.Amount,
+		sourceAta,
+		destinationAta,
+		senderPubKey,
+		[]solana.PublicKey{},
+	).Build(), nil
+}
+
+func (txSnd *TxSender) buildCreateInstruction(tx CreateInstructionDto) (solana.Instruction, error) {
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
+	}
+
+	receiverPubKey, err := wallet.PublicKeyFromAddress(tx.ReceiverPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse receiver public key: %w", err)
+	}
+
+	mintTokenAddress, err := wallet.PublicKeyFromAddress(tx.MintTokenAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse mint token address: %w", err)
+	}
+
+	return associatedtokenaccount.NewCreateInstruction(
+		senderPubKey,
+		receiverPubKey,
+		mintTokenAddress,
+	).Build(), nil
 }

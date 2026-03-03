@@ -10,6 +10,9 @@ import (
 type InstructionType string
 
 const (
+	InstructionCreateInstruction     InstructionType = "create_instruction"
+	InstructionTypeSOLTransfer       InstructionType = "transfer"
+	InstructionTypeSPLTransfer       InstructionType = "spl_transfer"
 	InstructionTypeBridgingRequest   InstructionType = "bridge_request"
 	InstructionTypeBridgeTransaction InstructionType = "bridge_transaction"
 	InstructionTypeBridgeVsu         InstructionType = "bridge_vsu"
@@ -25,12 +28,16 @@ type InstructionConfig struct {
 	tokenProgramID                     solana.PublicKey
 	systemProgramID                    solana.PublicKey
 	splAssociatedTokenAccountProgramID solana.PublicKey
+
+	isSimpleSender bool
 }
 
 type InstructionConfigOption func(c *InstructionConfig)
 
-func NewInstructionConfig(options ...InstructionConfigOption) *InstructionConfig {
-	cfg := &InstructionConfig{}
+func NewInstructionConfig(isSimpleSender bool, options ...InstructionConfigOption) *InstructionConfig {
+	cfg := &InstructionConfig{
+		isSimpleSender: isSimpleSender,
+	}
 
 	for _, option := range options {
 		option(cfg)
@@ -41,6 +48,10 @@ func NewInstructionConfig(options ...InstructionConfigOption) *InstructionConfig
 
 func (c *InstructionConfig) Validate() error {
 	var errs []error
+
+	if c.isSimpleSender {
+		return nil
+	}
 
 	// Check required fields
 	if !c.programKeyPair.IsValid() {
