@@ -39,6 +39,7 @@ func (s *ProgramEventSpecs) AddEventSpec(eventType any, name string) *ProgramEve
 	if eventType == nil {
 		panic(fmt.Sprintf("eventType cannot be nil for event '%s'", name))
 	}
+
 	val := reflect.ValueOf(eventType)
 	if val.Kind() == reflect.Ptr {
 		eventType = val.Elem().Interface()
@@ -59,7 +60,6 @@ func calculateEventDiscriminant(eventName string) [8]byte {
 	// the discriminant is calculated as:
 	//
 	// SHA256("event:"+"TransactionExecutedEvent")[:8]
-
 	preimage := "event:" + eventName
 
 	hash := sha256.Sum256([]byte(preimage))

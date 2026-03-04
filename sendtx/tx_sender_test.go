@@ -13,6 +13,7 @@ import (
 )
 
 func TestNewTxSender(t *testing.T) {
+	ctx := context.Background()
 	mockProvider := new(MockSenderTxProvider)
 
 	treasuryWallet, err := wallet.NewWallet()
@@ -115,7 +116,7 @@ func TestNewTxSender(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			"wrongIxType",
 			interface{}(nil),
@@ -172,6 +173,7 @@ func TestNewTxSender(t *testing.T) {
 }
 
 func TestBridgingRequest(t *testing.T) {
+	ctx := context.Background()
 	mockProvider := new(MockSenderTxProvider)
 
 	treasuryWallet, err := wallet.NewWallet()
@@ -212,11 +214,20 @@ func TestBridgingRequest(t *testing.T) {
 			},
 		}
 
+		expectedTx := &solana.Transaction{}
 		expectedSig := solana.Signature{1, 2, 3}
 
-		mockProvider.On("ExecuteInstruction",
+		// Mock CreateIxTransaction
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		// Mock ExecuteTransaction for SendTx
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -231,11 +242,22 @@ func TestBridgingRequest(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		// CreateTx
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		// SendTx
+		sig, err := txSender.SendTx(
+			ctx,
+			*senderWallet,
+			tx,
 		)
 
 		require.NoError(t, err)
@@ -287,7 +309,7 @@ func TestBridgingRequest(t *testing.T) {
 		require.NoError(t, err)
 
 		sig, err := txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -342,7 +364,7 @@ func TestBridgingRequest(t *testing.T) {
 		require.NoError(t, err)
 
 		sig, err := txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -398,7 +420,7 @@ func TestBridgingRequest(t *testing.T) {
 		require.NoError(t, err)
 
 		sig, err := txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -446,7 +468,7 @@ func TestBridgingRequest(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -492,7 +514,7 @@ func TestBridgingRequest(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -531,8 +553,8 @@ func TestBridgingRequest(t *testing.T) {
 			},
 		}
 
-		expectedErr := errors.New("mocked error")
-		mockProvider.On("ExecuteInstruction",
+		expectedErr := errors.New("mocked create error")
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
@@ -549,7 +571,7 @@ func TestBridgingRequest(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -598,7 +620,7 @@ func TestBridgingRequest(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
 			txDto,
@@ -611,6 +633,7 @@ func TestBridgingRequest(t *testing.T) {
 }
 
 func TestBridgingTransaction(t *testing.T) {
+	ctx := context.Background()
 	mockProvider := new(MockSenderTxProvider)
 
 	treasuryWallet, err := wallet.NewWallet()
@@ -652,11 +675,18 @@ func TestBridgingTransaction(t *testing.T) {
 			},
 		}
 
+		expectedTx := &solana.Transaction{}
 		expectedSig := solana.Signature{4, 5, 6}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -670,11 +700,20 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
+		tx, err := txSender.CreateTx(
 			context.Background(),
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
 			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
 		)
 
 		require.NoError(t, err)
@@ -719,7 +758,7 @@ func TestBridgingTransaction(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
 			txDto,
@@ -766,7 +805,7 @@ func TestBridgingTransaction(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
 			txDto,
@@ -812,7 +851,7 @@ func TestBridgingTransaction(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
 			txDto,
@@ -824,6 +863,7 @@ func TestBridgingTransaction(t *testing.T) {
 }
 
 func TestBridgeVSU(t *testing.T) {
+	ctx := context.Background()
 	mockProvider := new(MockSenderTxProvider)
 
 	treasuryWallet, err := wallet.NewWallet()
@@ -858,11 +898,18 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:              42,
 		}
 
-		expectedSig := solana.Signature{1, 2, 3}
+		expectedTx := &solana.Transaction{}
+		expectedSig := solana.Signature{4, 5, 6}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -876,11 +923,20 @@ func TestBridgeVSU(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
 		)
 
 		require.NoError(t, err)
@@ -902,11 +958,18 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:                43,
 		}
 
+		expectedTx := &solana.Transaction{}
 		expectedSig := solana.Signature{4, 5, 6}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -920,11 +983,20 @@ func TestBridgeVSU(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
 		)
 
 		require.NoError(t, err)
@@ -947,11 +1019,18 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:                44,
 		}
 
+		expectedTx := &solana.Transaction{}
 		expectedSig := solana.Signature{7, 8, 9}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -965,11 +1044,20 @@ func TestBridgeVSU(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
 		)
 
 		require.NoError(t, err)
@@ -1007,7 +1095,7 @@ func TestBridgeVSU(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
@@ -1039,7 +1127,7 @@ func TestBridgeVSU(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
@@ -1071,7 +1159,7 @@ func TestBridgeVSU(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
@@ -1103,7 +1191,7 @@ func TestBridgeVSU(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
@@ -1133,23 +1221,36 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:    1,
 		}
 
+		expectedTx := &solana.Transaction{}
 		expectedSig := solana.Signature{10, 11, 12}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
+			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
 			txDto,
 		)
 
-		// This might be valid depending on your business logic
-		// If empty lists are allowed, this should pass
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
+		)
 		require.NoError(t, err)
 		require.Equal(t, &expectedSig, sig)
 		mockProvider.AssertExpectations(t)
@@ -1157,6 +1258,7 @@ func TestBridgeVSU(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
+	ctx := context.Background()
 	mockProvider := new(MockSenderTxProvider)
 
 	treasuryWallet, err := wallet.NewWallet()
@@ -1181,6 +1283,7 @@ func TestInitialize(t *testing.T) {
 	require.NoError(t, err)
 
 	expectedSig := solana.Signature{}
+	expectedTx := &solana.Transaction{}
 
 	t.Run("success with 4 validators", func(t *testing.T) {
 		validator1 := solana.NewWallet().PublicKey().String()
@@ -1196,9 +1299,15 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{1, 2, 3}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -1212,13 +1321,21 @@ func TestInitialize(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
 		)
 
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
+		)
 		require.NoError(t, err)
 		require.Equal(t, &expectedSig, sig)
 		mockProvider.AssertExpectations(t)
@@ -1238,9 +1355,15 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{4, 5, 6}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -1254,13 +1377,21 @@ func TestInitialize(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
 		)
 
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
+		)
 		require.NoError(t, err)
 		require.Equal(t, &expectedSig, sig)
 		mockProvider.AssertExpectations(t)
@@ -1275,9 +1406,15 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{7, 8, 9}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -1291,13 +1428,21 @@ func TestInitialize(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
 		)
 
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
+		)
 		require.NoError(t, err)
 		require.Equal(t, &expectedSig, sig)
 		mockProvider.AssertExpectations(t)
@@ -1330,7 +1475,7 @@ func TestInitialize(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
@@ -1359,7 +1504,7 @@ func TestInitialize(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
@@ -1390,7 +1535,7 @@ func TestInitialize(t *testing.T) {
 		}
 
 		_, err = txSender.CreateTx(
-			context.Background(),
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
@@ -1412,9 +1557,15 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{13, 14, 15}
 
-		mockProvider.On("ExecuteInstruction",
+		mockProvider.On("CreateIxTransaction",
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
+			senderWallet.PrivateKey,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
@@ -1428,15 +1579,21 @@ func TestInitialize(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		sig, err := txSender.CreateTx(
-			context.Background(),
+		tx, err := txSender.CreateTx(
+			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
 			txDto,
 		)
 
-		// If duplicates are allowed, this should pass
-		// If duplicates are not allowed, change to expect error
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			context.Background(),
+			*senderWallet,
+			tx,
+		)
 		require.NoError(t, err)
 		require.Equal(t, &expectedSig, sig)
 		mockProvider.AssertExpectations(t)
@@ -1447,8 +1604,17 @@ type MockSenderTxProvider struct {
 	mock.Mock
 }
 
-func (m *MockSenderTxProvider) ExecuteInstruction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Signature, error) {
+func (m *MockSenderTxProvider) CreateIxTransaction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error) {
 	args := m.Called(ctx, ix, feePayer)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*solana.Transaction), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) ExecuteTransaction(ctx context.Context, tx *solana.Transaction, feePayer solana.PrivateKey) (*solana.Signature, error) {
+	args := m.Called(ctx, tx, feePayer)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

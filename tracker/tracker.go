@@ -204,12 +204,15 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
+
 	if storage == nil {
 		return nil, fmt.Errorf("storage cannot be nil")
 	}
+
 	if len(config.TrackedPrograms) == 0 {
 		return nil, fmt.Errorf("must track at least one program")
 	}
+
 	// Set up RPC client if not provided externally
 	if err := setupClient(config); err != nil {
 		return nil, err
@@ -295,6 +298,7 @@ func (t *EventTracker) ChError() <-chan ErrorNotification {
 func (t *EventTracker) State() eventTrackerState {
 	t.mut.Lock()
 	defer t.mut.Unlock()
+
 	return t.state
 }
 
@@ -399,6 +403,7 @@ func (t *EventTracker) Start() {
 	t.applyTx = t.storage.UseTransactions()
 	// Transition to active state before starting the goroutine
 	t.setState(active)
+
 	go func() {
 		t.logger.Info("Starting indexing from slot %d", currentSlot)
 
@@ -408,9 +413,11 @@ func (t *EventTracker) Start() {
 			case <-t.chPause:
 				t.setState(paused)
 				t.logger.Info("Event tracker has been paused")
+
 				return // exit goroutine
 			case <-t.chTerminate:
 				t.terminate()
+
 				return // exit goroutine
 			default: // continue with normal execution
 			}
@@ -424,10 +431,11 @@ func (t *EventTracker) Start() {
 				t.logger.Error("Failed to fetch slot %d: %s", currentSlot, err.Error())
 				t.logger.Info("I will try again in %d ms...", t.pollTime.Milliseconds())
 				time.Sleep(t.pollTime)
+
 				continue
 			}
 
-			if currentSlot > uint64(fetchedSlot) {
+			if currentSlot > fetchedSlot {
 				t.logger.Debug(
 					"Reached chain head, waiting for slot %d to be %s (currently last %s: %d)",
 					currentSlot,
@@ -437,11 +445,12 @@ func (t *EventTracker) Start() {
 				)
 				t.logger.Info("I will try again in %d ms...", t.pollTime.Milliseconds())
 				time.Sleep(t.pollTime)
+
 				continue
 			}
 
 			// Catch-up loop: Process all available slots up to chain head
-			for currentSlot <= uint64(fetchedSlot) {
+			for currentSlot <= fetchedSlot {
 				// Check for pause/terminate signals during catch-up
 				select {
 				case <-t.chPause:
@@ -451,6 +460,7 @@ func (t *EventTracker) Start() {
 					return
 				case <-t.chTerminate:
 					t.terminate()
+
 					return
 				default:
 				}
@@ -470,6 +480,7 @@ func (t *EventTracker) Start() {
 								fmt.Errorf("failed to store skipped slot: %w", err), true})
 							t.logger.Error("Failed to store skipped slot: %s", err.Error())
 							t.terminate()
+
 							return
 						}
 
@@ -477,6 +488,7 @@ func (t *EventTracker) Start() {
 						t.logger.Info("Slot %d was skipped (no block produced), moving to next slot", currentSlot)
 
 						currentSlot++
+
 						continue
 					}
 
@@ -486,6 +498,7 @@ func (t *EventTracker) Start() {
 					t.logger.Error("Failed to fetch block for slot %d: %s", currentSlot, err.Error())
 					t.logger.Info("I will try again in %d ms...", t.pollTime.Milliseconds())
 					time.Sleep(t.pollTime)
+
 					break // Break inner loop, outer loop will retry
 				}
 
@@ -495,6 +508,7 @@ func (t *EventTracker) Start() {
 							fmt.Errorf("failed to store slot: %w", err), true})
 						t.logger.Error("Failed to store slot: %s", err.Error())
 						t.terminate()
+
 						return
 					}
 
@@ -502,6 +516,7 @@ func (t *EventTracker) Start() {
 					t.logger.Debug("Slot %d is empty", currentSlot)
 
 					currentSlot++
+
 					continue
 				}
 
@@ -514,36 +529,36 @@ func (t *EventTracker) Start() {
 				t.notify(SlotNotification{currentSlot, true})
 
 				currentSlot++
+
 				if t.blockFetchDelay > 0 {
 					time.Sleep(t.blockFetchDelay) // Rate limiting between block fetches to avoid hitting RPC limits during catch-up
 				}
 			}
 
-			if currentSlot > uint64(fetchedSlot) {
+			if currentSlot > fetchedSlot {
 				// Sleep when caught up to chain head
 				t.logger.Debug("Processed up to slot %d, waiting for new blocks...", currentSlot-1)
 				time.Sleep(t.pollTime)
 			}
 		}
 	}()
-
 }
 
 func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool {
 	// TODO: We should also check whether any of the tracked programs was called via a CPI.
-
 	var eventFns []func(st store.StorageTransaction) error
 	// Store event details for post-commit notifications in transaction mode
 	var pendingNotifications []EventNotification
 
 	trackedInTx := make(map[solana.PublicKey]bool)
+
 	for txIndex, tx := range block.Transactions {
 		transaction, err := tx.GetTransaction()
 		if err != nil {
 			t.notify(ErrorNotification{
-				fmt.Errorf("failed to decode transaction %d: %s", txIndex+1, err), false})
+				fmt.Errorf("failed to decode transaction %d: %w", txIndex+1, err), false})
 
-			t.logger.Warn("Failed to decode transaction %d: %s", txIndex+1, err.Error())
+			t.logger.Warn("Failed to decode transaction %d: %w", txIndex+1, err.Error())
 
 			continue
 		}
@@ -565,8 +580,10 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 			if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
 				t.logger.Warn("Invalid ProgramIDIndex %d in transaction %d (only %d accounts)",
 					instruction.ProgramIDIndex, txIndex+1, len(transaction.Message.AccountKeys))
+
 				continue
 			}
+
 			programID := transaction.Message.AccountKeys[instruction.ProgramIDIndex]
 
 			if _, ok := t.trackedPrograms[programID]; ok {
@@ -587,6 +604,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 				if dataStart == -1 {
 					continue
 				}
+
 				base64Data := log[dataStart+14:] // len("Program data: ") = 14
 				base64Data = strings.TrimSpace(base64Data)
 				base64Data = strings.TrimRight(base64Data, "=") // Remove padding for RawStdEncoding
@@ -721,6 +739,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 
 func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) (any, string, error) {
 	decoder := binary.NewBorshDecoder(eventData)
+
 	discriminator, err := decoder.ReadDiscriminator()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get event discriminator: %w", err)
@@ -729,12 +748,12 @@ func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) 
 	trackedEvents, ok := t.trackedPrograms[programID] // checked existence of programID in processBlock
 	if !ok {
 		t.logger.Warn("Program %s not found in tracked programs", programID)
+
 		return nil, "", nil
 	}
 
 	for _, event := range trackedEvents {
 		if event.discriminant == discriminator {
-
 			value := reflect.New(reflect.ValueOf(event.eventType).Type()).Interface()
 
 			deserValue, ok := value.(interface {
@@ -765,6 +784,7 @@ func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) 
 // helper that checks if the error indicates a skipped/missing slot
 func isSkippedSlotError(err error) bool {
 	errStr := err.Error()
+
 	return strings.Contains(errStr, "-32007") ||
 		strings.Contains(errStr, "was skipped") ||
 		strings.Contains(errStr, "missing due to ledger jump")
@@ -775,9 +795,11 @@ func setupClient(config *EventTrackerConfig) error {
 	if config.Client != nil {
 		return nil
 	}
+
 	if config.RPCEndpoint == "" {
 		return fmt.Errorf("either config.Client or config.RPCEndpoint must be set")
 	}
+
 	config.Client = rpc.New(config.RPCEndpoint)
 	return nil
 }

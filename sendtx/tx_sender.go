@@ -15,7 +15,10 @@ import (
 )
 
 type SenderTxProvider interface {
-	ExecuteInstruction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Signature, error)
+	CreateIxTransaction(
+		ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error)
+	ExecuteTransaction(
+		ctx context.Context, tx *solana.Transaction, feePayer solana.PrivateKey) (*solana.Signature, error)
 }
 
 var _ SenderTxProvider = (*wallet.Provider)(nil)
@@ -59,23 +62,31 @@ func (txSnd *TxSender) CreateTx(
 	solanaWallet wallet.Wallet,
 	instructionType InstructionType,
 	txDto interface{},
-) (*solana.Signature, error) {
+) (*solana.Transaction, error) {
 	instruction, err := txSnd.buildInstruction(instructionType, txDto)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare bridging request instruction: %w", err)
 	}
 
-	signature, err := txSnd.sendTransaction(ctx, instruction, solanaWallet)
+	tx, err := txSnd.txProvider.CreateIxTransaction(ctx, &instruction, solanaWallet.PrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send %s transaction: %w", instructionType, err)
+		return nil, fmt.Errorf("failed to create %s transaction: %w", instructionType, err)
+	}
+
+	return tx, nil
+}
+
+func (txSnd *TxSender) SendTx(
+	ctx context.Context,
+	solanaWallet wallet.Wallet,
+	transaction *solana.Transaction,
+) (*solana.Signature, error) {
+	signature, err := txSnd.txProvider.ExecuteTransaction(ctx, transaction, solanaWallet.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send %s transaction: %w", transaction.Signatures[0], err)
 	}
 
 	return signature, nil
-}
-
-func (txSnd *TxSender) sendTransaction(
-	ctx context.Context, instruction solana.Instruction, solanaWallet wallet.Wallet) (*solana.Signature, error) {
-	return txSnd.txProvider.ExecuteInstruction(ctx, &instruction, solanaWallet.PrivateKey)
 }
 
 func checkFees(config ChainConfig, bridgingFee, operationFee uint64) error {

@@ -71,9 +71,8 @@ func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) 
 	)
 }
 
-func (p *Provider) ExecuteInstruction(
-	ctx context.Context, ix *solana.Instruction,
-	feePayer solana.PrivateKey) (*solana.Signature, error) {
+func (p *Provider) CreateIxTransaction(
+	ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error) {
 	blockHash, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest blockhash: %w", err)
@@ -85,7 +84,13 @@ func (p *Provider) ExecuteInstruction(
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
 
-	_, err = tx.Sign(func(pubkey solana.PublicKey) *solana.PrivateKey {
+	return tx, nil
+}
+
+func (p *Provider) ExecuteTransaction(
+	ctx context.Context, tx *solana.Transaction,
+	feePayer solana.PrivateKey) (*solana.Signature, error) {
+	_, err := tx.Sign(func(pubkey solana.PublicKey) *solana.PrivateKey {
 		if pubkey.Equals(feePayer.PublicKey()) {
 			return &feePayer
 		}

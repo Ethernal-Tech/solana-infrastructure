@@ -145,6 +145,7 @@ func (b *BoltStorageHandler) Close() error {
 func encodeUint64(v uint64) []byte {
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, v)
+
 	return buf
 }
 
@@ -227,7 +228,6 @@ func (b *BoltStorageHandler) StoreEvent(
 	programID solana.PublicKey,
 	eventName string,
 	eventData any) error {
-
 	storeFn := func(tx *bolt.Tx) error {
 		// Generate unique event ID
 		eventID, err := b.getNextEventID(tx)
@@ -346,6 +346,7 @@ func (b *BoltStorageHandler) MarkEventAsProcessed(eventID uint64) error {
 
 		// Get event from unprocessed bucket
 		eventKey := encodeUint64(eventID)
+
 		eventData := unprocessedBucket.Get(eventKey)
 		if eventData == nil {
 			return fmt.Errorf("event with ID %d not found in unprocessed bucket", eventID)
@@ -377,11 +378,14 @@ func (b *BoltStorageHandler) GetProcessedEventCount() (int, error) {
 
 func (b *BoltStorageHandler) bucketKeyCount(name []byte) (int, error) {
 	var count int
+
 	err := b.db.View(func(tx *bolt.Tx) error {
 		if bucket := tx.Bucket(name); bucket != nil {
 			count = bucket.Stats().KeyN
 		}
+
 		return nil
 	})
+
 	return count, err
 }
