@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math/big"
 
 	infracommon "github.com/Ethernal-Tech/cardano-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -164,7 +165,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	}
 
 	for _, receiver := range tx.Receivers {
-		if receiver.TokenAmount.Amount < txSnd.minAmountToBridge {
+		if receiver.TokenAmount.Amount.Cmp(new(big.Int).SetUint64(txSnd.minAmountToBridge)) == -1 {
 			return nil, fmt.Errorf("amount to bridge is less than the minimum required: %d", txSnd.minAmountToBridge)
 		}
 	}
@@ -207,7 +208,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	}
 
 	return skyline_program.NewBridgeRequestInstruction(
-		receiver.TokenAmount.Amount,
+		receiver.TokenAmount.Amount.Uint64(),
 		[]byte(receiver.Address),
 		tx.DstChainID,
 		tx.BridgingFee+tx.OperationFee,
@@ -272,7 +273,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 	}
 
 	return skyline_program.NewBridgeTransactionInstruction(
-		receiver.TokenAmount.Amount,
+		receiver.TokenAmount.Amount.Uint64(),
 		tx.BatchID,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,

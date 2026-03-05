@@ -3,6 +3,7 @@ package sendtx
 import (
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
@@ -207,7 +208,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -288,7 +289,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1_000_000,
+						Amount:    new(big.Int).SetUint64(1_000_000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -343,7 +344,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1_000_000_000,
+						Amount:    new(big.Int).SetUint64(1_000_000_000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -397,7 +398,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1_000_000_000,
+						Amount:    new(big.Int).SetUint64(1_000_000_000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -460,7 +461,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "invalid-address",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
@@ -506,7 +507,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
@@ -546,7 +547,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -601,7 +602,7 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.PublicKey{}.String(), // Zero address - invalid
 					},
 				},
@@ -668,7 +669,7 @@ func TestBridgingTransaction(t *testing.T) {
 				{
 					Address: receiverPubKey.String(),
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -750,7 +751,7 @@ func TestBridgingTransaction(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
@@ -797,7 +798,7 @@ func TestBridgingTransaction(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
@@ -843,7 +844,7 @@ func TestBridgingTransaction(t *testing.T) {
 				{
 					Address: "invalid-address",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
@@ -1087,7 +1088,7 @@ func TestBridgeVSU(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
@@ -1467,7 +1468,7 @@ func TestInitialize(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
