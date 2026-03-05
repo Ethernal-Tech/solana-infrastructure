@@ -189,7 +189,7 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -205,7 +205,7 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
 						TokenMint: tokenMint,
@@ -270,7 +270,7 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -286,7 +286,7 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1_000_000,
 						TokenMint: tokenMint,
@@ -325,7 +325,7 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -341,7 +341,7 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1_000_000_000,
 						TokenMint: tokenMint,
@@ -379,7 +379,7 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -395,7 +395,7 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1_000_000_000,
 						TokenMint: tokenMint,
@@ -458,10 +458,10 @@ func TestBridgingRequest(t *testing.T) {
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "invalid-address",
+					Address: "invalid-address",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -504,10 +504,10 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -528,7 +528,7 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -544,7 +544,7 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
 						TokenMint: tokenMint,
@@ -599,10 +599,10 @@ func TestBridgingRequest(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.PublicKey{}, // Zero address - invalid
+						TokenMint: solana.PublicKey{}.String(), // Zero address - invalid
 					},
 				},
 			},
@@ -650,7 +650,7 @@ func TestBridgingTransaction(t *testing.T) {
 		require.NoError(t, err)
 
 		receiverPubKey := solana.NewWallet().PublicKey()
-		tokenMint := solana.NewWallet().PublicKey()
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -666,7 +666,7 @@ func TestBridgingTransaction(t *testing.T) {
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: receiverPubKey.String(),
+					Address: receiverPubKey.String(),
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
 						TokenMint: tokenMint,
@@ -748,10 +748,10 @@ func TestBridgingTransaction(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -795,10 +795,10 @@ func TestBridgingTransaction(t *testing.T) {
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -841,10 +841,10 @@ func TestBridgingTransaction(t *testing.T) {
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "invalid-address",
+					Address: "invalid-address",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -1085,10 +1085,10 @@ func TestBridgeVSU(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -1465,10 +1465,10 @@ func TestInitialize(t *testing.T) {
 			DstChainID: 1,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
 						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},

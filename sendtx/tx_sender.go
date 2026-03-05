@@ -180,17 +180,22 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 
 	receiver := tx.Receivers[0]
 
-	err = wallet.ValidatePublicKey(receiver.TokenAmount.TokenMint, true)
+	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token mint address: %w", err)
+	}
+
+	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
 	if err != nil {
 		return nil, fmt.Errorf("receiver has an invalid token mint specified: %w", err)
 	}
 
-	senderAta, _, err := wallet.FindAssociatedTokenAddress(senderPubKey, receiver.TokenAmount.TokenMint)
+	senderAta, _, err := wallet.FindAssociatedTokenAddress(senderPubKey, tokenMintPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find sender associated token account: %w", err)
 	}
 
-	vaultAta, _, err := wallet.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, receiver.TokenAmount.TokenMint)
+	vaultAta, _, err := wallet.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, tokenMintPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find vault associated token account: %w", err)
 	}
@@ -203,7 +208,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 
 	return skyline_program.NewBridgeRequestInstruction(
 		receiver.TokenAmount.Amount,
-		[]byte(receiver.Addr),
+		[]byte(receiver.Address),
 		tx.DstChainID,
 		tx.BridgingFee+tx.OperationFee,
 		senderPubKey,
@@ -211,7 +216,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		senderAta,
 		txSnd.instructionConfig.vaultPDA,
 		vaultAta,
-		receiver.TokenAmount.TokenMint,
+		tokenMintPublicKey,
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
@@ -228,7 +233,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 
 	receiver := tx.Receivers[0]
 
-	if err := wallet.ValidateAddress(receiver.Addr, false); err != nil {
+	if err := wallet.ValidateAddress(receiver.Address, false); err != nil {
 		return nil, fmt.Errorf("invalid receiver address: %w", err)
 	}
 
@@ -237,9 +242,14 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
-	receiverPubKey, err := wallet.PublicKeyFromAddress(receiver.Addr)
+	receiverPubKey, err := wallet.PublicKeyFromAddress(receiver.Address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse receiver public key: %w", err)
+	}
+
+	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token mint address: %w", err)
 	}
 
 	buf := make([]byte, 8)
@@ -251,12 +261,12 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to find bridging transaction PDA: %w", err)
 	}
 
-	receiverAta, _, err := wallet.FindAssociatedTokenAddress(receiverPubKey, receiver.TokenAmount.TokenMint)
+	receiverAta, _, err := wallet.FindAssociatedTokenAddress(receiverPubKey, tokenMintPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find receiver associated token account: %w", err)
 	}
 
-	vaultAta, _, err := wallet.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, receiver.TokenAmount.TokenMint)
+	vaultAta, _, err := wallet.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, tokenMintPublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find vault associated token account: %w", err)
 	}
@@ -267,7 +277,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		bridgingTransactionPda,
-		receiver.TokenAmount.TokenMint,
+		tokenMintPublicKey,
 		receiverPubKey,
 		receiverAta,
 		txSnd.instructionConfig.vaultPDA,

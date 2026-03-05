@@ -94,6 +94,7 @@ func (p *Provider) ExecuteTransaction(
 		if pubkey.Equals(feePayer.PublicKey()) {
 			return &feePayer
 		}
+
 		return nil
 	})
 	if err != nil {
