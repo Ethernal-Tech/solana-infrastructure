@@ -534,6 +534,21 @@ func (t *EventTracker) Start() {
 					return
 				}
 
+				blockPoint := store.BlockPoint{
+					BlockSlot: currentSlot,
+					BlockHash: block.Blockhash,
+				}
+
+				if err := t.storage.StoreLatestBlockPoint(nil, blockPoint); err != nil {
+					t.notify(ErrorNotification{
+						fmt.Errorf("failed to store block point: %w", err), true,
+					})
+					t.logger.Error("Failed to store block point: %s", err.Error())
+					t.terminate()
+
+					return
+				}
+
 				if !t.processBlock(currentSlot, block) {
 					return
 				}

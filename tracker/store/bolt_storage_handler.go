@@ -58,6 +58,12 @@ type StorageHandler interface {
 	// which case an error is returned.
 	GetBlockhashBySlot(uint64) (solana.Hash, error)
 
+	// StoreLatestBlockPoint is invoked by the tracker after every successfully processed block.
+	StoreLatestBlockPoint(StorageTransaction, BlockPoint) error
+
+	// GetLatestBlockPoint returns the latest block point data, i.e. block slot and block hash.
+	GetLatestBlockPoint() (*BlockPoint, error)
+
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
@@ -109,12 +115,21 @@ type EventRecord struct {
 	Data      map[string]interface{} `json:"data"`
 }
 
+type BlockPoint struct {
+	BlockSlot uint64      `json:"slot"`
+	BlockHash solana.Hash `json:"hash"`
+}
+
 var (
 	slotBucket              = []byte("slot")
 	blocksBucket            = []byte("blocks")
+	latestBlockPointBucket  = []byte("latestBlockPoint")
 	unprocessedEventsBucket = []byte("unprocessed_events")
 	processedEventsBucket   = []byte("processed_events")
 	eventIDCounterBucket    = []byte("event_id_counter")
+
+	currentSlotKey      = []byte("current")
+	latestBlockPointKey = []byte("latestBlockPointKey")
 )
 
 func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error) {
@@ -132,6 +147,11 @@ func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error
 		_, err = tx.CreateBucketIfNotExists(blocksBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the blocks bucket: %w", err)
+		}
+
+		_, err = tx.CreateBucketIfNotExists(latestBlockPointBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the latestBlockPointBucket bucket: %w", err)
 		}
 
 		// Create unprocessed events bucket
@@ -208,7 +228,7 @@ func (b *BoltStorageHandler) ReadSlot() (uint64, error) {
 			return fmt.Errorf("cannot find slot bucket")
 		}
 
-		value := bucket.Get([]byte("current"))
+		value := bucket.Get(currentSlotKey)
 		if value == nil {
 			retValue = 0
 		} else {
@@ -230,7 +250,7 @@ func (b *BoltStorageHandler) StoreSlot(tx StorageTransaction, slot uint64) error
 			return fmt.Errorf("cannot find slot bucket")
 		}
 
-		return bucket.Put([]byte("current"), encodeUint64(slot+1))
+		return bucket.Put(currentSlotKey, encodeUint64(slot+1))
 	}
 
 	if tx == nil {
@@ -375,6 +395,52 @@ func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error
 	})
 
 	return found, err
+}
+
+func (b *BoltStorageHandler) StoreLatestBlockPoint(tx StorageTransaction, blockPoint BlockPoint) error {
+	storeFn := func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(latestBlockPointBucket)
+		if bucket == nil {
+			return fmt.Errorf("cannot find latestBlockPoint bucket")
+		}
+
+		bytes, err := json.Marshal(blockPoint)
+		if err != nil {
+			return fmt.Errorf("could not marshal latest block point: %w", err)
+		}
+
+		if err = bucket.Put(latestBlockPointKey, bytes); err != nil {
+			return fmt.Errorf("latest block point write error: %w", err)
+		}
+
+		return nil
+	}
+
+	if tx == nil {
+		return b.db.Update(storeFn)
+	}
+
+	if tx, ok := tx.(*bolt.Tx); ok {
+		return storeFn(tx)
+	}
+
+	return fmt.Errorf("unknown storage transaction type: %T", tx)
+}
+
+func (b *BoltStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {
+	var result *BlockPoint
+
+	if err := b.db.View(func(tx *bolt.Tx) error {
+		if data := tx.Bucket(latestBlockPointBucket).Get(latestBlockPointKey); len(data) > 0 {
+			return json.Unmarshal(data, &result)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // Retrieves up to N unprocessed events in order (by event ID)
