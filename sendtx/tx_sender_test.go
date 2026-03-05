@@ -26,6 +26,8 @@ func TestNewTxSender(t *testing.T) {
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
 
+	recentBlockHash := solana.Hash{}
+
 	t.Run("valid instruction config", func(t *testing.T) {
 		instructionConfig := InstructionConfig{
 			vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -120,6 +122,7 @@ func TestNewTxSender(t *testing.T) {
 			ctx,
 			*senderWallet,
 			"wrongIxType",
+			recentBlockHash,
 			interface{}(nil),
 		)
 
@@ -186,6 +189,8 @@ func TestBridgingRequest(t *testing.T) {
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
 
+	recentBlockHash := solana.Hash{}
+
 	t.Run("success", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -223,6 +228,7 @@ func TestBridgingRequest(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		// Mock ExecuteTransaction for SendTx
@@ -248,6 +254,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -313,6 +320,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -368,6 +376,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -424,6 +433,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -472,6 +482,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -518,6 +529,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -559,6 +571,7 @@ func TestBridgingRequest(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(nil, expectedErr)
 
 		txSender, err := NewTxSender(
@@ -575,6 +588,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -624,6 +638,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -645,6 +660,8 @@ func TestBridgingTransaction(t *testing.T) {
 
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
 
 	t.Run("success", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
@@ -683,6 +700,7 @@ func TestBridgingTransaction(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -705,6 +723,7 @@ func TestBridgingTransaction(t *testing.T) {
 			context.Background(),
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -762,6 +781,7 @@ func TestBridgingTransaction(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -809,6 +829,7 @@ func TestBridgingTransaction(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -855,6 +876,7 @@ func TestBridgingTransaction(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -875,6 +897,8 @@ func TestBridgeVSU(t *testing.T) {
 
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
 
 	instructionConfig := InstructionConfig{
 		vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -906,6 +930,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -928,6 +953,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -966,6 +992,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -988,6 +1015,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1027,6 +1055,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1049,6 +1078,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1099,6 +1129,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1131,6 +1162,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1163,6 +1195,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1195,6 +1228,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1229,6 +1263,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1241,6 +1276,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1270,6 +1306,8 @@ func TestInitialize(t *testing.T) {
 
 	programKeyPair, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
 
 	instructionConfig := InstructionConfig{
 		vaultPDA:                           solana.NewWallet().PublicKey(),
@@ -1304,6 +1342,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1326,6 +1365,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1360,6 +1400,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1382,6 +1423,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1411,6 +1453,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1433,6 +1476,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1479,6 +1523,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1508,6 +1553,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1539,6 +1585,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1562,6 +1609,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1584,6 +1632,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1605,8 +1654,8 @@ type MockSenderTxProvider struct {
 	mock.Mock
 }
 
-func (m *MockSenderTxProvider) CreateIxTransaction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error) {
-	args := m.Called(ctx, ix, feePayer)
+func (m *MockSenderTxProvider) CreateIxTransaction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey, recentBlockHash solana.Hash) (*solana.Transaction, error) {
+	args := m.Called(ctx, ix, feePayer, recentBlockHash)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

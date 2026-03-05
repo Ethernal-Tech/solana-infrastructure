@@ -72,13 +72,10 @@ func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) 
 }
 
 func (p *Provider) CreateIxTransaction(
-	ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error) {
-	blockHash, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest blockhash: %w", err)
-	}
-
-	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(blockHash.Value.Blockhash).
+	ctx context.Context, ix *solana.Instruction,
+	feePayer solana.PrivateKey, recentBlockHash solana.Hash,
+) (*solana.Transaction, error) {
+	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).
 		SetFeePayer(feePayer.PublicKey()).AddInstruction(*ix).Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)

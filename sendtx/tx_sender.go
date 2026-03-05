@@ -17,7 +17,9 @@ import (
 
 type SenderTxProvider interface {
 	CreateIxTransaction(
-		ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error)
+		ctx context.Context, ix *solana.Instruction,
+		feePayer solana.PrivateKey, recentBlockHash solana.Hash,
+	) (*solana.Transaction, error)
 	ExecuteTransaction(
 		ctx context.Context, tx *solana.Transaction, feePayer solana.PrivateKey) (*solana.Signature, error)
 }
@@ -62,6 +64,7 @@ func (txSnd *TxSender) CreateTx(
 	ctx context.Context,
 	solanaWallet wallet.Wallet,
 	instructionType InstructionType,
+	recentBlockHash solana.Hash,
 	txDto interface{},
 ) (*solana.Transaction, error) {
 	instruction, err := txSnd.buildInstruction(instructionType, txDto)
@@ -69,7 +72,7 @@ func (txSnd *TxSender) CreateTx(
 		return nil, fmt.Errorf("failed to prepare bridging request instruction: %w", err)
 	}
 
-	tx, err := txSnd.txProvider.CreateIxTransaction(ctx, &instruction, solanaWallet.PrivateKey)
+	tx, err := txSnd.txProvider.CreateIxTransaction(ctx, &instruction, solanaWallet.PrivateKey, recentBlockHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create %s transaction: %w", instructionType, err)
 	}

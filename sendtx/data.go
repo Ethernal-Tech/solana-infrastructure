@@ -15,7 +15,7 @@ type ChainConfig struct {
 }
 
 type BridgingTxReceiver struct {
-	Address     string             `json:"addr"`
+	Address     string             `json:"address"`
 	TokenAmount wallet.TokenAmount `json:"token_amount"`
 }
 
