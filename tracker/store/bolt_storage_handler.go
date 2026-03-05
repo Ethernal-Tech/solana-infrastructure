@@ -42,6 +42,22 @@ type StorageHandler interface {
 	// error, the tracker will terminate immediately.
 	StoreSlot(StorageTransaction, uint64) error
 
+	// StoreBlock is invoked by the tracker after every successfully processed block. Note that a
+	// block does not necessarily contain transactions, however, the method will still be invoked
+	// for those empty blocks. In transaction-like mode, the method is not invoked directly but rather
+	// wrapped and passed to [ApplyTransaction]. The first argument is a transaction object from the
+	// underlying storage backend, see [ApplyTransaction] for more information. The second argument is
+	// the slot number of the block, and the third argument is the block hash. The implementation is
+	// responsible for storing the block hash for the given slot. If the method returns an error, the
+	// tracker will terminate immediately.
+	StoreBlock(StorageTransaction, uint64, solana.Hash) error
+
+	// GetBlockhashBySlot returns the block hash stored for the given slot. If no hash exists for
+	// that exact slot (i.e. it was an empty/skipped slot), it walks forward by incrementing the
+	// slot number until a hash is found or the current indexing head (ReadSlot) is exceeded, in
+	// which case an error is returned.
+	GetBlockhashBySlot(uint64) (solana.Hash, error)
+
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
@@ -95,6 +111,7 @@ type EventRecord struct {
 
 var (
 	slotBucket              = []byte("slot")
+	blocksBucket            = []byte("blocks")
 	unprocessedEventsBucket = []byte("unprocessed_events")
 	processedEventsBucket   = []byte("processed_events")
 	eventIDCounterBucket    = []byte("event_id_counter")
@@ -110,6 +127,11 @@ func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error
 		_, err := tx.CreateBucketIfNotExists(slotBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the slot bucket: %w", err)
+		}
+
+		_, err = tx.CreateBucketIfNotExists(blocksBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the blocks bucket: %w", err)
 		}
 
 		// Create unprocessed events bucket
@@ -222,6 +244,27 @@ func (b *BoltStorageHandler) StoreSlot(tx StorageTransaction, slot uint64) error
 	return fmt.Errorf("unknown storage transaction type: %T", tx)
 }
 
+func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, slot uint64, hash solana.Hash) error {
+	storeFn := func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(blocksBucket)
+		if bucket == nil {
+			return fmt.Errorf("cannot find blocks bucket")
+		}
+
+		return bucket.Put(encodeUint64(slot), hash[:])
+	}
+
+	if tx == nil {
+		return b.db.Update(storeFn)
+	}
+
+	if tx, ok := tx.(*bolt.Tx); ok {
+		return storeFn(tx)
+	}
+
+	return fmt.Errorf("unknown storage transaction type: %T", tx)
+}
+
 func (b *BoltStorageHandler) StoreEvent(
 	tx StorageTransaction,
 	slot uint64,
@@ -299,6 +342,39 @@ func (b *BoltStorageHandler) ApplyTransaction(
 
 		return slotFn(tx)
 	})
+}
+
+func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error) {
+	head, err := b.ReadSlot()
+	if err != nil {
+		return solana.Hash{}, fmt.Errorf("cannot read current slot: %w", err)
+	}
+
+	if slot >= head {
+		return solana.Hash{}, fmt.Errorf("slot %d has not been processed yet (head is %d)", slot, head)
+	}
+
+	var found solana.Hash
+
+	err = b.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(blocksBucket)
+		if bucket == nil {
+			return fmt.Errorf("cannot find blocks bucket")
+		}
+
+		for s := slot; s < head; s++ {
+			v := bucket.Get(encodeUint64(s))
+			if v != nil {
+				copy(found[:], v)
+
+				return nil
+			}
+		}
+
+		return fmt.Errorf("no block hash found at or after slot %d (head is %d)", slot, head)
+	})
+
+	return found, err
 }
 
 // Retrieves up to N unprocessed events in order (by event ID)

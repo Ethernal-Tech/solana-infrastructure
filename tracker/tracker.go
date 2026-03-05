@@ -522,6 +522,15 @@ func (t *EventTracker) Start() {
 
 				t.logger.Info("Block in slot %d has %d transactions", currentSlot, len(block.Transactions))
 
+				if err := t.storage.StoreBlock(nil, currentSlot, block.Blockhash); err != nil {
+					t.notify(ErrorNotification{
+						fmt.Errorf("failed to store block: %w", err), true})
+					t.logger.Error("Failed to store block: %s", err.Error())
+					t.terminate()
+
+					return
+				}
+
 				if !t.processBlock(currentSlot, block) {
 					return
 				}
