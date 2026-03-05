@@ -557,6 +557,7 @@ func (t *EventTracker) Start() {
 }
 
 func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool {
+	//nolint:godox
 	// TODO: We should also check whether any of the tracked programs was called via a CPI.
 	var eventFns []func(st store.StorageTransaction) error
 	// Store event details for post-commit notifications in transaction mode
