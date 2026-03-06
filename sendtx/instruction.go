@@ -22,8 +22,9 @@ const (
 type InstructionConfig struct {
 	programKeyPair solana.PrivateKey
 
-	validatorSetPDA solana.PublicKey
-	vaultPDA        solana.PublicKey
+	validatorSetPDA  solana.PublicKey
+	vaultPDA         solana.PublicKey
+	tokenRegistryPDA solana.PublicKey
 
 	tokenProgramID                     solana.PublicKey
 	systemProgramID                    solana.PublicKey
@@ -66,6 +67,10 @@ func (c *InstructionConfig) Validate() error {
 		errs = append(errs, fmt.Errorf("vaultPDA is invalid: %w", err))
 	}
 
+	if err := wallet.ValidatePublicKey(c.tokenRegistryPDA, true); err != nil {
+		errs = append(errs, fmt.Errorf("tokenRegistryPDA is invalid: %w", err))
+	}
+
 	if c.tokenProgramID != solana.TokenProgramID {
 		errs = append(errs, fmt.Errorf("tokenProgramID must be the default Solana Token Program ID"))
 	}
@@ -99,6 +104,12 @@ func WithValidatorSetPDA(validatorSetPDA solana.PublicKey) InstructionConfigOpti
 func WithVaultPDA(vaultPDA solana.PublicKey) InstructionConfigOption {
 	return func(c *InstructionConfig) {
 		c.vaultPDA = vaultPDA
+	}
+}
+
+func WithTokenRegistryPDA(tokenRegistryPDA solana.PublicKey) InstructionConfigOption {
+	return func(c *InstructionConfig) {
+		c.tokenRegistryPDA = tokenRegistryPDA
 	}
 }
 

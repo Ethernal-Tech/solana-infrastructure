@@ -2,7 +2,6 @@ package sendtx
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"math/big"
 
@@ -221,6 +220,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		txSnd.instructionConfig.vaultPDA,
 		vaultAta,
 		tokenMintPublicKey,
+		txSnd.instructionConfig.tokenRegistryPDA,
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
@@ -235,10 +235,40 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("invalid sender address: %w", err)
 	}
 
-	receiver := tx.Receivers[0]
+	mintIndex := make(map[solana.PublicKey]uint8)
 
-	if err := wallet.ValidateAddress(receiver.Address, false); err != nil {
-		return nil, fmt.Errorf("invalid receiver address: %w", err)
+	var mints []solana.PublicKey
+
+	transferItems := make([]skyline_program.TransferItem, 0, len(tx.Receivers))
+
+	for _, receiver := range tx.Receivers {
+		if err := wallet.ValidateAddress(receiver.Address, false); err != nil {
+			return nil, fmt.Errorf("invalid receiver address: %w", err)
+		}
+
+		receiverPubKey, err := wallet.PublicKeyFromAddress(receiver.Address)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse receiver public key: %w", err)
+		}
+
+		mint, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse token mint address: %w", err)
+		}
+
+		idx, exists := mintIndex[mint]
+		if !exists {
+			idx = uint8(len(mints)) //nolint:gosec // number of mints is bounded by protocol
+			mintIndex[mint] = idx
+
+			mints = append(mints, mint)
+		}
+
+		transferItems = append(transferItems, skyline_program.TransferItem{
+			Recipient: receiverPubKey,
+			MintIndex: idx,
+			Amount:    receiver.TokenAmount.Amount.Uint64(),
+		})
 	}
 
 	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
@@ -246,46 +276,13 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
-	receiverPubKey, err := wallet.PublicKeyFromAddress(receiver.Address)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse receiver public key: %w", err)
-	}
-
-	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token mint address: %w", err)
-	}
-
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, 1)
-
-	bridgingTransactionPda, _, err := solana.FindProgramAddress(
-		[][]byte{skyline_program.BRIDGING_TRANSACTION_SEED, buf}, txSnd.instructionConfig.programKeyPair.PublicKey())
-	if err != nil {
-		return nil, fmt.Errorf("failed to find bridging transaction PDA: %w", err)
-	}
-
-	receiverAta, _, err := wallet.FindAssociatedTokenAddress(receiverPubKey, tokenMintPublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find receiver associated token account: %w", err)
-	}
-
-	vaultAta, _, err := wallet.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, tokenMintPublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find vault associated token account: %w", err)
-	}
-
 	return skyline_program.NewBridgeTransactionInstruction(
-		receiver.TokenAmount.Amount.Uint64(),
+		transferItems,
+		mints,
 		tx.BatchID,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
-		bridgingTransactionPda,
-		tokenMintPublicKey,
-		receiverPubKey,
-		receiverAta,
 		txSnd.instructionConfig.vaultPDA,
-		vaultAta,
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
@@ -331,22 +328,12 @@ func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instru
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, 1)
-
-	validatorSetChangePda, _, err := solana.FindProgramAddress(
-		[][]byte{skyline_program.VALIDATOR_SET_CHANGE_SEED, buf}, txSnd.instructionConfig.programKeyPair.PublicKey())
-	if err != nil {
-		return nil, fmt.Errorf("failed to find validator set change PDA: %w", err)
-	}
-
 	return skyline_program.NewBridgeVsuInstruction(
 		addingValidatorPubKeys,
 		removingValidatorPubKeys,
 		tx.BatchID,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
-		validatorSetChangePda,
 		txSnd.instructionConfig.systemProgramID,
 	)
 }
@@ -387,8 +374,6 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		&tx.LastID,
 		txSnd.chainConfig.MinOperationFeeAmount,
 		txSnd.chainConfig.MinFeeForBridging,
-		txSnd.minAmountToBridge,
-		txSnd.chainConfig.CurrencyTokenID,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.vaultPDA,
