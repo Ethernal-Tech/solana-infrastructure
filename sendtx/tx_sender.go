@@ -29,15 +29,16 @@ type TxSender struct {
 	txProvider        SenderTxProvider
 	minAmountToBridge uint64
 	chainConfig       ChainConfig
-	instructionConfig InstructionConfig
+	instructionConfig *InstructionConfig
 	retryOptions      []infracommon.RetryConfigOption
 }
 
 func NewTxSender(txProvider SenderTxProvider,
-	chainConfig ChainConfig, instructionConfig InstructionConfig,
+	chainConfig ChainConfig, programKey solana.PrivateKey,
 ) (*TxSender, error) {
-	if err := instructionConfig.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid instruction config: %w", err)
+	instructionConfig, err := NewInstructionConfig(programKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to instantiate instruction config: %w", err)
 	}
 
 	if err := wallet.ValidatePublicKey(chainConfig.TreasuryAddress, false); err != nil {
@@ -181,6 +182,12 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		return nil, fmt.Errorf("failed to parse sender address: %w", err)
 	}
 
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithValidatorSetPDA(), WithVaultPDA(), WithTokenRegistryPDA(), WithFeeConfigPDA()); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	// for now, we only support txs with one receiver
 	receiver := tx.Receivers[0]
 
 	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
@@ -203,15 +210,9 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		return nil, fmt.Errorf("failed to find vault associated token account: %w", err)
 	}
 
-	feeConfigPda, _, err := solana.FindProgramAddress(
-		[][]byte{skyline_program.FEE_CONFIG_SEED}, txSnd.instructionConfig.programKeyPair.PublicKey())
-	if err != nil {
-		return nil, fmt.Errorf("failed to find bridging transaction PDA: %w", err)
-	}
-
 	return skyline_program.NewBridgeRequestInstruction(
 		receiver.TokenAmount.Amount.Uint64(),
-		[]byte(receiver.Address),
+		receiver.Address,
 		tx.DstChainID,
 		tx.BridgingFee+tx.OperationFee,
 		senderPubKey,
@@ -224,7 +225,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
-		feeConfigPda,
+		txSnd.instructionConfig.feeConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
 		txSnd.chainConfig.BridgingFeeAddress,
 	)
@@ -274,6 +275,10 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
+	}
+
+	if err = txSnd.instructionConfig.ApplyOptions(WithValidatorSetPDA(), WithVaultPDA()); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
 	return skyline_program.NewBridgeTransactionInstruction(
@@ -328,6 +333,10 @@ func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instru
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
+	if err = txSnd.instructionConfig.ApplyOptions(WithValidatorSetPDA()); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
 	return skyline_program.NewBridgeVsuInstruction(
 		addingValidatorPubKeys,
 		removingValidatorPubKeys,
@@ -363,10 +372,9 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		return nil, fmt.Errorf("failed to parse sender public key: %w", err)
 	}
 
-	feeConfigPda, _, err := solana.FindProgramAddress(
-		[][]byte{skyline_program.FEE_CONFIG_SEED}, txSnd.instructionConfig.programKeyPair.PublicKey())
-	if err != nil {
-		return nil, fmt.Errorf("failed to find bridging transaction PDA: %w", err)
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithValidatorSetPDA(), WithVaultPDA(), WithFeeConfigPDA()); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
 	return skyline_program.NewInitializeInstruction(
@@ -377,7 +385,7 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.vaultPDA,
-		feeConfigPda,
+		txSnd.instructionConfig.feeConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
 		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,

@@ -16,8 +16,8 @@ import (
 func NewBridgeRequestInstruction(
 	// Params:
 	amountParam uint64,
-	receiverParam []byte,
-	destinationChainParam uint8,
+	receiverParam string,
+	destinationChainParam string,
 	feesParam uint64,
 
 	// Accounts:

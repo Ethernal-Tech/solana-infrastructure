@@ -23,18 +23,14 @@ type BridgeRequestEvent struct {
 	// Amount of tokens to be bridged to the destination chain
 	Amount uint64 `json:"amount"`
 
-	// Receiver's address on the destination chain (variable length byte vector)
-	// This format accommodates various address formats across different blockchains
-	Receiver []byte `json:"receiver"`
+	// The recipient's address on the destination chain, encoded as a string.
+	Receiver string `json:"receiver"`
 
-	// Chain ID identifying the destination blockchain network
-	DestinationChain uint8 `json:"destinationChain"`
+	// Identifier for the destination blockchain (e.g., "ethereum", "bsc", "polygon")
+	DestinationChain string `json:"destinationChain"`
 
 	// Public key of the token mint being bridged
 	MintToken solanago.PublicKey `json:"mintToken"`
-
-	// The batch request ID associated with this bridge request
-	BatchRequestId uint64 `json:"batchRequestId"`
 
 	// The fee amount for the relayer to process this bridge request
 	BridgeFee uint64 `json:"bridgeFee"`
@@ -68,11 +64,6 @@ func (obj BridgeRequestEvent) MarshalWithEncoder(encoder *binary.Encoder) (err e
 	err = encoder.Encode(obj.MintToken)
 	if err != nil {
 		return errors.NewField("MintToken", err)
-	}
-	// Serialize `BatchRequestId`:
-	err = encoder.Encode(obj.BatchRequestId)
-	if err != nil {
-		return errors.NewField("BatchRequestId", err)
 	}
 	// Serialize `BridgeFee`:
 	err = encoder.Encode(obj.BridgeFee)
@@ -122,11 +113,6 @@ func (obj *BridgeRequestEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (er
 	err = decoder.Decode(&obj.MintToken)
 	if err != nil {
 		return errors.NewField("MintToken", err)
-	}
-	// Deserialize `BatchRequestId`:
-	err = decoder.Decode(&obj.BatchRequestId)
-	if err != nil {
-		return errors.NewField("BatchRequestId", err)
 	}
 	// Deserialize `BridgeFee`:
 	err = decoder.Decode(&obj.BridgeFee)

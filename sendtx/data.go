@@ -20,8 +20,7 @@ type BridgingTxReceiver struct {
 }
 
 type BridgeRequestDto struct {
-	SrcChainID   uint8
-	DstChainID   uint8
+	DstChainID   string
 	SenderAddr   string
 	Receivers    []BridgingTxReceiver
 	BridgingFee  uint64
