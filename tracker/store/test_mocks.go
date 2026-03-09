@@ -9,6 +9,8 @@ type MockStorageHandler struct {
 	mock.Mock
 }
 
+var _ StorageHandler = (*MockStorageHandler)(nil)
+
 func (m *MockStorageHandler) ReadSlot() (uint64, error) {
 	args := m.Called()
 
@@ -61,11 +63,11 @@ func (m *MockStorageHandler) StoreLatestBlockPoint(tx StorageTransaction, blockP
 	return args.Error(0)
 }
 
-func (m *MockStorageHandler) GetLatestBlockPoint() (BlockPoint, error) {
+func (m *MockStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {
 	args := m.Called()
 
 	//nolint:forcetypeassert
-	return args.Get(0).(BlockPoint), args.Error(1)
+	return args.Get(0).(*BlockPoint), args.Error(1)
 }
 
 func (m *MockStorageHandler) GetUnprocessedEvents(limit int) ([]EventRecord, error) {
