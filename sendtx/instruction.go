@@ -36,9 +36,9 @@ type InstructionConfig struct {
 type InstructionConfigOption func(c *InstructionConfig) error
 
 func NewInstructionConfig(
-	programKey solana.PublicKey, options ...InstructionConfigOption) (*InstructionConfig, error) {
+	options ...InstructionConfigOption) (*InstructionConfig, error) {
 	cfg := &InstructionConfig{
-		programKey:                         programKey,
+		programKey:                         skyline_program.ProgramID,
 		tokenProgramID:                     solana.TokenProgramID,
 		systemProgramID:                    solana.SystemProgramID,
 		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,

@@ -24,21 +24,11 @@ func TestNewTxSender(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKey, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-
 	recentBlockHash := solana.Hash{}
 
 	t.Run("valid instruction config", func(t *testing.T) {
-		instructionConfig := &InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKey:                         programKey.PublicKey(),
-		}
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
 
 		txSender, err := NewTxSender(
 			mockProvider,
@@ -57,15 +47,8 @@ func TestNewTxSender(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		instructionConfig := &InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKey:                         programKey.PublicKey(),
-		}
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
 
 		txSender, err := NewTxSender(
 			mockProvider,
@@ -89,15 +72,8 @@ func TestNewTxSender(t *testing.T) {
 	})
 
 	t.Run("invalid treasury address", func(t *testing.T) {
-		instructionConfig := &InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKey:                         programKey.PublicKey(),
-		}
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
 
 		txSender, err := NewTxSender(
 			mockProvider,
@@ -113,15 +89,8 @@ func TestNewTxSender(t *testing.T) {
 	})
 
 	t.Run("invalid bridging fee address", func(t *testing.T) {
-		instructionConfig := &InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKey:                         programKey.PublicKey(),
-		}
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
 
 		txSender, err := NewTxSender(
 			mockProvider,
@@ -147,20 +116,10 @@ func TestBridgingRequest(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKey, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-
 	recentBlockHash := solana.Hash{}
 
-	instructionConfig := &InstructionConfig{
-		vaultPDA:                           solana.NewWallet().PublicKey(),
-		validatorSetPDA:                    solana.NewWallet().PublicKey(),
-		tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-		tokenProgramID:                     solana.TokenProgramID,
-		systemProgramID:                    solana.SystemProgramID,
-		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-		programKey:                         programKey.PublicKey(),
-	}
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
@@ -560,20 +519,10 @@ func TestBridgingTransaction(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKey, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-
 	recentBlockHash := solana.Hash{}
 
-	instructionConfig := &InstructionConfig{
-		vaultPDA:                           solana.NewWallet().PublicKey(),
-		validatorSetPDA:                    solana.NewWallet().PublicKey(),
-		tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-		tokenProgramID:                     solana.TokenProgramID,
-		systemProgramID:                    solana.SystemProgramID,
-		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-		programKey:                         programKey.PublicKey(),
-	}
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
@@ -776,20 +725,10 @@ func TestBridgeVSU(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKey, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-
 	recentBlockHash := solana.Hash{}
 
-	instructionConfig := &InstructionConfig{
-		vaultPDA:                           solana.NewWallet().PublicKey(),
-		validatorSetPDA:                    solana.NewWallet().PublicKey(),
-		tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-		tokenProgramID:                     solana.TokenProgramID,
-		systemProgramID:                    solana.SystemProgramID,
-		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-		programKey:                         programKey.PublicKey(),
-	}
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
 
 	//nolint:dupl
 	t.Run("success with adding validators", func(t *testing.T) {
@@ -1186,9 +1125,6 @@ func TestInitialize(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKey, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-
 	recentBlockHash := solana.Hash{}
 
 	senderWallet, err := wallet.NewWallet()
@@ -1197,15 +1133,8 @@ func TestInitialize(t *testing.T) {
 	expectedSig := solana.Signature{}
 	expectedTx := &solana.Transaction{}
 
-	instructionConfig := &InstructionConfig{
-		vaultPDA:                           solana.NewWallet().PublicKey(),
-		validatorSetPDA:                    solana.NewWallet().PublicKey(),
-		tokenRegistryPDA:                   solana.NewWallet().PublicKey(),
-		tokenProgramID:                     solana.TokenProgramID,
-		systemProgramID:                    solana.SystemProgramID,
-		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-		programKey:                         programKey.PublicKey(),
-	}
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
 
 	t.Run("success with 4 validators", func(t *testing.T) {
 		validator1 := solana.NewWallet().PublicKey().String()
