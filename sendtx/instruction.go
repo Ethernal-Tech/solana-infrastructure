@@ -21,7 +21,7 @@ const (
 )
 
 type InstructionConfig struct {
-	programKey solana.PrivateKey
+	programKey solana.PublicKey
 
 	validatorSetPDA  solana.PublicKey
 	vaultPDA         solana.PublicKey
@@ -36,7 +36,7 @@ type InstructionConfig struct {
 type InstructionConfigOption func(c *InstructionConfig) error
 
 func NewInstructionConfig(
-	programKey solana.PrivateKey, options ...InstructionConfigOption) (*InstructionConfig, error) {
+	programKey solana.PublicKey, options ...InstructionConfigOption) (*InstructionConfig, error) {
 	cfg := &InstructionConfig{
 		programKey:                         programKey,
 		tokenProgramID:                     solana.TokenProgramID,
@@ -49,10 +49,6 @@ func NewInstructionConfig(
 	}
 
 	return cfg, nil
-}
-
-func (c *InstructionConfig) GetProgramID() solana.PublicKey {
-	return c.programKey.PublicKey()
 }
 
 func (c *InstructionConfig) ApplyOptions(options ...InstructionConfigOption) error {
@@ -118,7 +114,7 @@ func WithTokenRegistryPDA() InstructionConfigOption {
 }
 
 func (c *InstructionConfig) derivePDA(seed []byte) (*solana.PublicKey, error) {
-	pda, _, err := solana.FindProgramAddress([][]byte{seed}, c.programKey.PublicKey())
+	pda, _, err := solana.FindProgramAddress([][]byte{seed}, c.programKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive token regirstry PDA: %w", err)
 	}

@@ -34,13 +34,8 @@ type TxSender struct {
 }
 
 func NewTxSender(txProvider SenderTxProvider,
-	chainConfig ChainConfig, programKey solana.PrivateKey,
+	chainConfig ChainConfig, instructionConfig *InstructionConfig,
 ) (*TxSender, error) {
-	instructionConfig, err := NewInstructionConfig(programKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to instantiate instruction config: %w", err)
-	}
-
 	if err := wallet.ValidatePublicKey(chainConfig.TreasuryAddress, false); err != nil {
 		return nil, fmt.Errorf("invalid treasury address %v in chain config: %w", chainConfig.TreasuryAddress, err)
 	}
