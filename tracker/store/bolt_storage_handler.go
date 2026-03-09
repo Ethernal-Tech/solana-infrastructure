@@ -104,7 +104,7 @@ type BoltStorageHandler struct {
 	db     *bolt.DB
 }
 
-var _ StorageHandler = (*BoltStorageHandler)(nil)
+var _ StorageHandler = &BoltStorageHandler{}
 
 // EventRecord represents a stored event with metadata
 type EventRecord struct {
