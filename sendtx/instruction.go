@@ -3,6 +3,7 @@ package sendtx
 import (
 	"fmt"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
 )
@@ -20,103 +21,107 @@ const (
 )
 
 type InstructionConfig struct {
-	programKeyPair solana.PrivateKey
+	programKey solana.PublicKey
 
-	validatorSetPDA solana.PublicKey
-	vaultPDA        solana.PublicKey
+	validatorSetPDA  solana.PublicKey
+	vaultPDA         solana.PublicKey
+	feeConfigPDA     solana.PublicKey
+	tokenRegistryPDA solana.PublicKey
 
 	tokenProgramID                     solana.PublicKey
 	systemProgramID                    solana.PublicKey
 	splAssociatedTokenAccountProgramID solana.PublicKey
-
-	isSimpleSender bool
 }
 
-type InstructionConfigOption func(c *InstructionConfig)
+type InstructionConfigOption func(c *InstructionConfig) error
 
-func NewInstructionConfig(isSimpleSender bool, options ...InstructionConfigOption) *InstructionConfig {
+func NewInstructionConfig(
+	options ...InstructionConfigOption) (*InstructionConfig, error) {
 	cfg := &InstructionConfig{
-		isSimpleSender: isSimpleSender,
+		programKey:                         skyline_program.ProgramID,
+		tokenProgramID:                     solana.TokenProgramID,
+		systemProgramID:                    solana.SystemProgramID,
+		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
 	}
 
-	for _, option := range options {
-		option(cfg)
+	if err := cfg.ApplyOptions(options...); err != nil {
+		return nil, err
 	}
 
-	return cfg
+	return cfg, nil
 }
 
-func (c *InstructionConfig) Validate() error {
-	var errs []error
-
-	if c.isSimpleSender {
-		return nil
-	}
-
-	// Check required fields
-	if !c.programKeyPair.IsValid() {
-		errs = append(errs, fmt.Errorf("programKeyPair is required"))
-	}
-
-	if err := wallet.ValidatePublicKey(c.validatorSetPDA, true); err != nil {
-		errs = append(errs, fmt.Errorf("validatorSetPDA is invalid: %w", err))
-	}
-
-	if err := wallet.ValidatePublicKey(c.vaultPDA, true); err != nil {
-		errs = append(errs, fmt.Errorf("vaultPDA is invalid: %w", err))
-	}
-
-	if c.tokenProgramID != solana.TokenProgramID {
-		errs = append(errs, fmt.Errorf("tokenProgramID must be the default Solana Token Program ID"))
-	}
-
-	if c.systemProgramID != solana.SystemProgramID {
-		errs = append(errs, fmt.Errorf("systemProgramID must be the default Solana System Program ID"))
-	}
-
-	if c.splAssociatedTokenAccountProgramID != solana.SPLAssociatedTokenAccountProgramID {
-		errs = append(errs,
-			fmt.Errorf("SPLAssociatedTokenAccountProgramID must be the default Solana SPL Associated Token Account Program ID"))
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("config validation failed: %w", errs[0])
+func (c *InstructionConfig) ApplyOptions(options ...InstructionConfigOption) error {
+	for _, option := range options {
+		if err := option(c); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (c *InstructionConfig) GetProgramID() solana.PublicKey {
-	return c.programKeyPair.PublicKey()
-}
+func WithValidatorSetPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		validatorSetPDA, err := c.derivePDA(skyline_program.VALIDATOR_SET_SEED)
+		if err != nil {
+			return fmt.Errorf("failed to derive validator set PDA: %w", err)
+		}
 
-func WithValidatorSetPDA(validatorSetPDA solana.PublicKey) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.validatorSetPDA = validatorSetPDA
+		c.validatorSetPDA = *validatorSetPDA
+
+		return nil
 	}
 }
 
-func WithVaultPDA(vaultPDA solana.PublicKey) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.vaultPDA = vaultPDA
+func WithVaultPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		vaultPDA, err := c.derivePDA(skyline_program.VAULT_SEED)
+		if err != nil {
+			return fmt.Errorf("failed to derive vault PDA: %w", err)
+		}
+
+		c.vaultPDA = *vaultPDA
+
+		return nil
 	}
 }
 
-func WithTokenProgramID(tokenProgramID solana.PublicKey) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.tokenProgramID = tokenProgramID
+func WithFeeConfigPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		feeConfigPDA, err := c.derivePDA(skyline_program.FEE_CONFIG_SEED)
+		if err != nil {
+			return fmt.Errorf("failed to derive fee config PDA: %w", err)
+		}
+
+		c.feeConfigPDA = *feeConfigPDA
+
+		return nil
 	}
 }
 
-func WithSystemProgramID(systemProgramID solana.PublicKey) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.systemProgramID = systemProgramID
+func WithTokenRegistryPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		tokenRegistryPDA, err := c.derivePDA(skyline_program.TOKEN_REGISTRY_SEED)
+		if err != nil {
+			return fmt.Errorf("failed to derive token regirstry PDA: %w", err)
+		}
+
+		c.tokenRegistryPDA = *tokenRegistryPDA
+
+		return nil
 	}
 }
 
-func WithSPLAssociatedTokenAccountProgramID(
-	splAssociatedTokenAccountProgramID solana.PublicKey) InstructionConfigOption {
-	return func(c *InstructionConfig) {
-		c.splAssociatedTokenAccountProgramID = splAssociatedTokenAccountProgramID
+func (c *InstructionConfig) derivePDA(seed []byte) (*solana.PublicKey, error) {
+	pda, _, err := solana.FindProgramAddress([][]byte{seed}, c.programKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive token regirstry PDA: %w", err)
 	}
+
+	if err := wallet.ValidatePublicKey(pda, true); err != nil {
+		return nil, fmt.Errorf("tokenRegistryPDA is invalid: %w", err)
+	}
+
+	return &pda, nil
 }

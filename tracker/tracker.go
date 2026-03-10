@@ -55,6 +55,8 @@ type EventNotification struct {
 }
 
 // ErrorNotification represents a notification sent on the chError channel.
+//
+//nolint:errname
 type ErrorNotification struct {
 	// Error is the concrete error that occurred during event tracker execution.
 	error
@@ -384,20 +386,21 @@ func (t *EventTracker) Start() {
 	}
 
 	if t.client == nil {
-		handleError(nil,
+		_ = handleError(nil,
 			"method must be invoked on an instance initialized through [NewEventTracker]")
 	} else if t.storage == nil {
-		handleError(nil,
+		_ = handleError(nil,
 			"this event tracker instance is terminated, only paused tracker can be again started")
 	}
+
 	// prevent starting if already active
 	if t.State() == active {
-		handleError(nil, "tracker is already running")
+		_ = handleError(nil, "tracker is already running")
 	}
 
 	currentSlot, err := t.storage.ReadSlot()
 	if err != nil {
-		handleError(err, "cannot read starting slot")
+		_ = handleError(err, "cannot read starting slot")
 	}
 
 	t.applyTx = t.storage.UseTransactions()
@@ -531,6 +534,21 @@ func (t *EventTracker) Start() {
 					return
 				}
 
+				blockPoint := store.BlockPoint{
+					BlockSlot: currentSlot,
+					BlockHash: block.Blockhash,
+				}
+
+				if err := t.storage.StoreLatestBlockPoint(nil, blockPoint); err != nil {
+					t.notify(ErrorNotification{
+						fmt.Errorf("failed to store block point: %w", err), true,
+					})
+					t.logger.Error("Failed to store block point: %s", err.Error())
+					t.terminate()
+
+					return
+				}
+
 				if !t.processBlock(currentSlot, block) {
 					return
 				}
@@ -554,6 +572,7 @@ func (t *EventTracker) Start() {
 }
 
 func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool {
+	//nolint:godox
 	// TODO: We should also check whether any of the tracked programs was called via a CPI.
 	var eventFns []func(st store.StorageTransaction) error
 	// Store event details for post-commit notifications in transaction mode
@@ -810,5 +829,6 @@ func setupClient(config *EventTrackerConfig) error {
 	}
 
 	config.Client = rpc.New(config.RPCEndpoint)
+
 	return nil
 }

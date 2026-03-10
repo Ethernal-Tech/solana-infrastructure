@@ -1,8 +1,8 @@
 package wallet
 
-import "github.com/gagliardetto/solana-go"
+import "math/big"
 
 type TokenAmount struct {
-	TokenMint solana.PublicKey `json:"token_id"`
-	Amount    uint64           `json:"val"`
+	TokenMint string   `json:"token_mint"`
+	Amount    *big.Int `json:"amount"`
 }

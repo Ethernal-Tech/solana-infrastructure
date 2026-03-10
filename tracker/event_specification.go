@@ -35,9 +35,9 @@ type ProgramEventSpecs []eventSpec
 // so you should always use Anchor-generated bindings to ensure proper implementation. The name
 // parameter must exactly match the event name defined in the Anchor program's #[event] attribute,
 // as it is used to calculate the 8-byte discriminator for event identification.
-func (s *ProgramEventSpecs) AddEventSpec(eventType any, name string) *ProgramEventSpecs {
+func (s *ProgramEventSpecs) AddEventSpec(eventType any, name string) (*ProgramEventSpecs, error) {
 	if eventType == nil {
-		panic(fmt.Sprintf("eventType cannot be nil for event '%s'", name))
+		return nil, fmt.Errorf("eventType cannot be nil for event '%s'", name)
 	}
 
 	val := reflect.ValueOf(eventType)
@@ -51,7 +51,7 @@ func (s *ProgramEventSpecs) AddEventSpec(eventType any, name string) *ProgramEve
 		discriminant: calculateEventDiscriminant(name),
 	})
 
-	return s
+	return s, nil
 }
 
 func calculateEventDiscriminant(eventName string) [8]byte {

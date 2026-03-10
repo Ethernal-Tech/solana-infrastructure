@@ -3,26 +3,20 @@ package wallet
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
-	"github.com/gagliardetto/solana-go/rpc/ws"
 )
 
 type Provider struct {
 	rpcClient *rpc.Client
-	wsClient  *ws.Client
+	// wsClient  *ws.Client
 }
 
 func NewProvider(endpoint string) (*Provider, error) {
-	wsCli, err := ws.Connect(context.Background(), rpc.LocalNet_WS)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to localnet: %w", err)
-	}
-
 	return &Provider{
 		rpcClient: rpc.New(endpoint),
-		wsClient:  wsCli,
 	}, nil
 }
 
@@ -72,13 +66,10 @@ func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) 
 }
 
 func (p *Provider) CreateIxTransaction(
-	ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error) {
-	blockHash, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get latest blockhash: %w", err)
-	}
-
-	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(blockHash.Value.Blockhash).
+	ctx context.Context, ix *solana.Instruction,
+	feePayer solana.PrivateKey, recentBlockHash solana.Hash,
+) (*solana.Transaction, error) {
+	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).
 		SetFeePayer(feePayer.PublicKey()).AddInstruction(*ix).Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
@@ -94,6 +85,7 @@ func (p *Provider) ExecuteTransaction(
 		if pubkey.Equals(feePayer.PublicKey()) {
 			return &feePayer
 		}
+
 		return nil
 	})
 	if err != nil {
@@ -108,7 +100,9 @@ func (p *Provider) ExecuteTransaction(
 		return nil, fmt.Errorf("failed to send transaction: %w", err)
 	}
 
-	if err = p.WaitForSignature(signature, rpc.CommitmentFinalized); err != nil {
+	maxWaitTime := 1 * time.Minute
+
+	if err = p.WaitForSignature(ctx, signature, rpc.CommitmentFinalized, maxWaitTime); err != nil {
 		return nil, fmt.Errorf("error while waiting for signature: %w", err)
 	}
 
@@ -180,19 +174,37 @@ func (p *Provider) SimulateTransaction(
 	)
 }
 
-func (p *Provider) WaitForSignature(sig solana.Signature, commitment rpc.CommitmentType) error {
-	sub, err := p.wsClient.SignatureSubscribe(sig, commitment)
-	if err != nil {
-		return err
-	}
-	defer sub.Unsubscribe()
+func (p *Provider) WaitForSignature(
+	ctx context.Context, sig solana.Signature, commitment rpc.CommitmentType, maxWaitTime time.Duration) error {
+	for {
+		statuses, err := p.rpcClient.GetSignatureStatuses(ctx, true, sig)
+		if err != nil {
+			return err
+		}
 
-	rd := <-sub.Response()
-	if rd.Value.Err != nil {
-		return fmt.Errorf("transaction failed: %v", rd.Value.Err)
-	}
+		if len(statuses.Value) > 0 && statuses.Value[0] != nil {
+			status := statuses.Value[0]
+			if status.Err != nil {
+				return fmt.Errorf("transaction with signature %s failed: %v", sig.String(), status.Err)
+			}
 
-	return nil
+			if status.ConfirmationStatus != "" &&
+				// Check if the confirmation status is already finalized, or matches the expected commitment level
+				// If the transaction is finalized, there's no need to poll anymore, preventing an infinite loop.
+				rpc.CommitmentType(status.ConfirmationStatus) == rpc.CommitmentFinalized ||
+				rpc.CommitmentType(status.ConfirmationStatus) == commitment {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(maxWaitTime):
+			return fmt.Errorf("timeout while waiting for transaction: %s", sig.String())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func (p *Provider) RequestSolAirdrop(

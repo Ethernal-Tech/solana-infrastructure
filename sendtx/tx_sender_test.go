@@ -3,8 +3,10 @@ package sendtx
 import (
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/mock"
@@ -22,153 +24,49 @@ func TestNewTxSender(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKeyPair, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
+	recentBlockHash := solana.Hash{}
 
 	t.Run("valid instruction config", func(t *testing.T) {
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
-
-		txSender, err := NewTxSender(
-			mockProvider,
-			ChainConfig{
-				TreasuryAddress:    treasuryWallet.PublicKey,
-				BridgingFeeAddress: feeWallet.PublicKey,
-			},
-			instructionConfig,
-		)
-
+		instructionConfig, err := NewInstructionConfig()
 		require.NoError(t, err)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
 		require.NotNil(t, txSender)
-	})
-
-	t.Run("missing vault PDA", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
-
-		instructionConfig := InstructionConfig{
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
-
-		txSender, err := NewTxSender(
-			mockProvider,
-			ChainConfig{
-				TreasuryAddress:    treasuryWallet.PublicKey,
-				BridgingFeeAddress: feeWallet.PublicKey,
-			},
-			instructionConfig,
-		)
-
-		require.Error(t, err, "vaultPDA")
-		require.Nil(t, txSender)
-	})
-
-	t.Run("missing validator set PDA", func(t *testing.T) {
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
-
-		txSender, err := NewTxSender(
-			mockProvider,
-			ChainConfig{
-				TreasuryAddress:    treasuryWallet.PublicKey,
-				BridgingFeeAddress: feeWallet.PublicKey,
-			},
-			instructionConfig,
-		)
-
-		require.Error(t, err, "validatorSetPDA")
-		require.Nil(t, txSender)
 	})
 
 	t.Run("CreateTx - invalid DTO type", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
+
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
-			InstructionConfig{
-				vaultPDA:                           solana.NewWallet().PublicKey(),
-				validatorSetPDA:                    solana.NewWallet().PublicKey(),
-				tokenProgramID:                     solana.TokenProgramID,
-				systemProgramID:                    solana.SystemProgramID,
-				splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-				programKeyPair:                     programKeyPair,
-			},
+			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		_, err = txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			"wrongIxType",
+			recentBlockHash,
 			interface{}(nil),
 		)
 
 		require.Error(t, err, "unsupported transaction type")
-	})
-
-	t.Run("invalid treasury address", func(t *testing.T) {
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
-
-		txSender, err := NewTxSender(
-			mockProvider,
-			ChainConfig{
-				TreasuryAddress:    solana.PublicKey{},
-				BridgingFeeAddress: feeWallet.PublicKey,
-			},
-			instructionConfig,
-		)
-
-		require.Error(t, err, "invalid treasury address")
-		require.Nil(t, txSender)
-	})
-
-	t.Run("invalid bridging fee address", func(t *testing.T) {
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
-
-		txSender, err := NewTxSender(
-			mockProvider,
-			ChainConfig{
-				TreasuryAddress:    treasuryWallet.PublicKey,
-				BridgingFeeAddress: solana.PublicKey{},
-			},
-			instructionConfig,
-		)
-
-		require.Error(t, err, "invalid bridging fee address")
-		require.Nil(t, txSender)
 	})
 }
 
@@ -182,32 +80,25 @@ func TestBridgingRequest(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKeyPair, err := solana.NewRandomPrivateKey()
+	recentBlockHash := solana.Hash{}
+
+	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
-
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -222,6 +113,7 @@ func TestBridgingRequest(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		// Mock ExecuteTransaction for SendTx
@@ -231,7 +123,7 @@ func TestBridgingRequest(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				MinAmountToBridge:  0,
@@ -240,13 +132,13 @@ func TestBridgingRequest(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		// CreateTx
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -265,30 +157,23 @@ func TestBridgingRequest(t *testing.T) {
 		mockProvider.AssertExpectations(t)
 	})
 
-	//nolint:dupl
-	t.Run("insuficient bridging amount", func(t *testing.T) {
+	t.Run("invalid treasury address", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
 
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1_000_000,
+						Amount:    new(big.Int).SetUint64(1_000_000_000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -296,7 +181,94 @@ func TestBridgingRequest(t *testing.T) {
 			BridgingFee: 1_000_000_000,
 		}
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    solana.PublicKey{},
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		sig, err := txSender.CreateTx(
+			ctx,
+			*senderWallet,
+			InstructionTypeBridgingRequest,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err, "invalid treasury address")
+		require.Nil(t, sig)
+	})
+
+	t.Run("invalid bridging fee address", func(t *testing.T) {
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		instructionConfig, err := NewInstructionConfig()
+		require.NoError(t, err)
+
+		tokenMint := solana.NewWallet().PublicKey().String()
+
+		txDto := BridgeRequestDto{
+			SenderAddr: senderWallet.PublicKey.String(),
+			DstChainID: common.ChainIDPrime,
+			Receivers: []BridgingTxReceiver{
+				{
+					Address: "0x1234567890123456789012345678901234567890",
+					TokenAmount: wallet.TokenAmount{
+						Amount:    new(big.Int).SetUint64(1_000_000_000),
+						TokenMint: tokenMint,
+					},
+				},
+			},
+			BridgingFee: 1_000_000_000,
+		}
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: solana.PublicKey{},
+			},
+			instructionConfig,
+		)
+
+		sig, err := txSender.CreateTx(
+			ctx,
+			*senderWallet,
+			InstructionTypeBridgingRequest,
+			recentBlockHash,
+			txDto,
+		)
+		require.Error(t, err, "invalid bridging fee address")
+		require.Nil(t, sig)
+	})
+
+	//nolint:dupl
+	t.Run("insuficient bridging amount", func(t *testing.T) {
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		tokenMint := solana.NewWallet().PublicKey().String()
+
+		txDto := BridgeRequestDto{
+			SenderAddr: senderWallet.PublicKey.String(),
+			DstChainID: common.ChainIDPrime,
+			Receivers: []BridgingTxReceiver{
+				{
+					Address: "0x1234567890123456789012345678901234567890",
+					TokenAmount: wallet.TokenAmount{
+						Amount:    new(big.Int).SetUint64(1_000_000),
+						TokenMint: tokenMint,
+					},
+				},
+			},
+			BridgingFee: 1_000_000_000,
+		}
+
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -306,12 +278,12 @@ func TestBridgingRequest(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		sig, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -325,25 +297,16 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
-
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1_000_000_000,
+						Amount:    new(big.Int).SetUint64(1_000_000_000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -351,7 +314,7 @@ func TestBridgingRequest(t *testing.T) {
 			BridgingFee: 1_000_000,
 		}
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -361,12 +324,12 @@ func TestBridgingRequest(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		sig, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -379,25 +342,16 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
-
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1_000_000_000,
+						Amount:    new(big.Int).SetUint64(1_000_000_000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -406,7 +360,7 @@ func TestBridgingRequest(t *testing.T) {
 			OperationFee: 1_000_000,
 		}
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:       treasuryWallet.PublicKey,
@@ -417,12 +371,12 @@ func TestBridgingRequest(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		sig, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -435,22 +389,14 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
-			InstructionConfig{
-				vaultPDA:                           solana.NewWallet().PublicKey(),
-				validatorSetPDA:                    solana.NewWallet().PublicKey(),
-				tokenProgramID:                     solana.TokenProgramID,
-				systemProgramID:                    solana.SystemProgramID,
-				splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-				programKeyPair:                     programKeyPair,
-			},
+			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		// Pass BridgeTransactionDto instead of BridgeRequestDto
 		txDto := BridgeTransactionDto{
@@ -458,10 +404,10 @@ func TestBridgingRequest(t *testing.T) {
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "invalid-address",
+					Address: "invalid-address",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -471,43 +417,35 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
 		require.Error(t, err, "Expected BridgeRequestDto")
 	})
 
-	//nolint:dupl
 	t.Run("invalid sender address", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
-			InstructionConfig{
-				vaultPDA:                           solana.NewWallet().PublicKey(),
-				validatorSetPDA:                    solana.NewWallet().PublicKey(),
-				tokenProgramID:                     solana.TokenProgramID,
-				systemProgramID:                    solana.SystemProgramID,
-				splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-				programKeyPair:                     programKeyPair,
-			},
+			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeRequestDto{
 			SenderAddr: "invalid-address",
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -517,6 +455,7 @@ func TestBridgingRequest(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -528,25 +467,16 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		tokenMint := solana.NewWallet().PublicKey()
-
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -558,9 +488,10 @@ func TestBridgingRequest(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(nil, expectedErr)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -568,12 +499,12 @@ func TestBridgingRequest(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		_, err = txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -585,30 +516,21 @@ func TestBridgingRequest(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
-
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.PublicKey{}, // Zero address - invalid
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.PublicKey{}.String(), // Zero address - invalid
 					},
 				},
 			},
 		}
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				MinAmountToBridge:  0,
@@ -617,12 +539,12 @@ func TestBridgingRequest(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		_, err = txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgingRequest,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -642,7 +564,9 @@ func TestBridgingTransaction(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKeyPair, err := solana.NewRandomPrivateKey()
+	recentBlockHash := solana.Hash{}
+
+	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
 
 	t.Run("success", func(t *testing.T) {
@@ -650,25 +574,16 @@ func TestBridgingTransaction(t *testing.T) {
 		require.NoError(t, err)
 
 		receiverPubKey := solana.NewWallet().PublicKey()
-		tokenMint := solana.NewWallet().PublicKey()
-
-		instructionConfig := InstructionConfig{
-			vaultPDA:                           solana.NewWallet().PublicKey(),
-			validatorSetPDA:                    solana.NewWallet().PublicKey(),
-			tokenProgramID:                     solana.TokenProgramID,
-			systemProgramID:                    solana.SystemProgramID,
-			splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-			programKeyPair:                     programKeyPair,
-		}
+		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeTransactionDto{
 			SenderAddr: senderWallet.PublicKey.String(),
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: receiverPubKey.String(),
+					Address: receiverPubKey.String(),
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
+						Amount:    new(big.Int).SetUint64(1000),
 						TokenMint: tokenMint,
 					},
 				},
@@ -682,6 +597,7 @@ func TestBridgingTransaction(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -690,7 +606,7 @@ func TestBridgingTransaction(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -698,12 +614,12 @@ func TestBridgingTransaction(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			context.Background(),
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -725,33 +641,25 @@ func TestBridgingTransaction(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
-			InstructionConfig{
-				vaultPDA:                           solana.NewWallet().PublicKey(),
-				validatorSetPDA:                    solana.NewWallet().PublicKey(),
-				tokenProgramID:                     solana.TokenProgramID,
-				systemProgramID:                    solana.SystemProgramID,
-				splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-				programKeyPair:                     programKeyPair,
-			},
+			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		// Pass BridgeRequestDto instead of BridgeTransactionDto
 		txDto := BridgeRequestDto{
 			SenderAddr: solana.NewWallet().PublicKey().String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -761,6 +669,7 @@ func TestBridgingTransaction(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -768,37 +677,28 @@ func TestBridgingTransaction(t *testing.T) {
 		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
 	})
 
-	//nolint:dupl
 	t.Run("invalid sender address", func(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
-			InstructionConfig{
-				vaultPDA:                           solana.NewWallet().PublicKey(),
-				validatorSetPDA:                    solana.NewWallet().PublicKey(),
-				tokenProgramID:                     solana.TokenProgramID,
-				systemProgramID:                    solana.SystemProgramID,
-				splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-				programKeyPair:                     programKeyPair,
-			},
+			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeTransactionDto{
 			SenderAddr: "invalid-address",
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234567890123456789012345678901234567890",
+					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -808,6 +708,7 @@ func TestBridgingTransaction(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -819,32 +720,24 @@ func TestBridgingTransaction(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
-			InstructionConfig{
-				vaultPDA:                           solana.NewWallet().PublicKey(),
-				validatorSetPDA:                    solana.NewWallet().PublicKey(),
-				tokenProgramID:                     solana.TokenProgramID,
-				systemProgramID:                    solana.SystemProgramID,
-				splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-				programKeyPair:                     programKeyPair,
-			},
+			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeTransactionDto{
 			SenderAddr: senderWallet.PublicKey.String(),
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "invalid-address",
+					Address: "invalid-address",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -854,6 +747,7 @@ func TestBridgingTransaction(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeTransaction,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -872,17 +766,10 @@ func TestBridgeVSU(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKeyPair, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
+	recentBlockHash := solana.Hash{}
 
-	instructionConfig := InstructionConfig{
-		vaultPDA:                           solana.NewWallet().PublicKey(),
-		validatorSetPDA:                    solana.NewWallet().PublicKey(),
-		tokenProgramID:                     solana.TokenProgramID,
-		systemProgramID:                    solana.SystemProgramID,
-		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-		programKeyPair:                     programKeyPair,
-	}
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
 
 	//nolint:dupl
 	t.Run("success with adding validators", func(t *testing.T) {
@@ -905,6 +792,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -913,7 +801,7 @@ func TestBridgeVSU(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -921,12 +809,12 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -965,6 +853,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -973,7 +862,7 @@ func TestBridgeVSU(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -981,12 +870,12 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1026,6 +915,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1034,7 +924,7 @@ func TestBridgeVSU(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1042,12 +932,12 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1069,7 +959,7 @@ func TestBridgeVSU(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1077,18 +967,17 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		// Pass BridgeRequestDto instead of BridgeVSUDto
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -1098,6 +987,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1110,7 +1000,7 @@ func TestBridgeVSU(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1118,7 +1008,6 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeVSUDto{
 			SenderAddr:           "invalid-address",
@@ -1130,6 +1019,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1142,7 +1032,7 @@ func TestBridgeVSU(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1150,7 +1040,6 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeVSUDto{
 			SenderAddr:           senderWallet.PublicKey.String(),
@@ -1162,6 +1051,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1174,7 +1064,7 @@ func TestBridgeVSU(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1182,7 +1072,6 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeVSUDto{
 			SenderAddr:             senderWallet.PublicKey.String(),
@@ -1194,6 +1083,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1206,7 +1096,7 @@ func TestBridgeVSU(t *testing.T) {
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1214,7 +1104,6 @@ func TestBridgeVSU(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := BridgeVSUDto{
 			SenderAddr: senderWallet.PublicKey.String(),
@@ -1228,6 +1117,7 @@ func TestBridgeVSU(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1240,6 +1130,7 @@ func TestBridgeVSU(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeBridgeVsu,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1267,23 +1158,16 @@ func TestInitialize(t *testing.T) {
 	feeWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
-	programKeyPair, err := solana.NewRandomPrivateKey()
-	require.NoError(t, err)
-
-	instructionConfig := InstructionConfig{
-		vaultPDA:                           solana.NewWallet().PublicKey(),
-		validatorSetPDA:                    solana.NewWallet().PublicKey(),
-		tokenProgramID:                     solana.TokenProgramID,
-		systemProgramID:                    solana.SystemProgramID,
-		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
-		programKeyPair:                     programKeyPair,
-	}
+	recentBlockHash := solana.Hash{}
 
 	senderWallet, err := wallet.NewWallet()
 	require.NoError(t, err)
 
 	expectedSig := solana.Signature{}
 	expectedTx := &solana.Transaction{}
+
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
 
 	t.Run("success with 4 validators", func(t *testing.T) {
 		validator1 := solana.NewWallet().PublicKey().String()
@@ -1303,6 +1187,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1311,7 +1196,7 @@ func TestInitialize(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1319,12 +1204,12 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1359,6 +1244,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1367,7 +1253,7 @@ func TestInitialize(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1375,12 +1261,12 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1410,6 +1296,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1418,7 +1305,7 @@ func TestInitialize(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1426,12 +1313,12 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1449,7 +1336,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1457,18 +1344,17 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		// Pass BridgeRequestDto instead of InitializeDto
 		txDto := BridgeRequestDto{
 			SenderAddr: senderWallet.PublicKey.String(),
-			DstChainID: 1,
+			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
 				{
-					Addr: "0x1234",
+					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    1000,
-						TokenMint: solana.NewWallet().PublicKey(),
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: solana.NewWallet().PublicKey().String(),
 					},
 				},
 			},
@@ -1478,6 +1364,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1487,7 +1374,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1495,7 +1382,6 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		txDto := InitializeDto{
 			SenderAddr: "invalid-address",
@@ -1507,6 +1393,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1516,7 +1403,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid validator address", func(t *testing.T) {
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1524,7 +1411,6 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		validValidator := solana.NewWallet().PublicKey().String()
 
@@ -1538,6 +1424,7 @@ func TestInitialize(t *testing.T) {
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1561,6 +1448,7 @@ func TestInitialize(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Instruction"),
 			senderWallet.PrivateKey,
+			recentBlockHash,
 		).Return(expectedTx, nil)
 
 		mockProvider.On("ExecuteTransaction",
@@ -1569,7 +1457,7 @@ func TestInitialize(t *testing.T) {
 			senderWallet.PrivateKey,
 		).Return(&expectedSig, nil)
 
-		txSender, err := NewTxSender(
+		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
 				TreasuryAddress:    treasuryWallet.PublicKey,
@@ -1577,12 +1465,12 @@ func TestInitialize(t *testing.T) {
 			},
 			instructionConfig,
 		)
-		require.NoError(t, err)
 
 		tx, err := txSender.CreateTx(
 			ctx,
 			*senderWallet,
 			InstructionTypeInitialize,
+			recentBlockHash,
 			txDto,
 		)
 
@@ -1604,8 +1492,8 @@ type MockSenderTxProvider struct {
 	mock.Mock
 }
 
-func (m *MockSenderTxProvider) CreateIxTransaction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey) (*solana.Transaction, error) {
-	args := m.Called(ctx, ix, feePayer)
+func (m *MockSenderTxProvider) CreateIxTransaction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey, recentBlockHash solana.Hash) (*solana.Transaction, error) {
+	args := m.Called(ctx, ix, feePayer, recentBlockHash)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

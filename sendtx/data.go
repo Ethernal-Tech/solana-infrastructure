@@ -15,13 +15,12 @@ type ChainConfig struct {
 }
 
 type BridgingTxReceiver struct {
-	Addr        string             `json:"addr"`
+	Address     string             `json:"address"`
 	TokenAmount wallet.TokenAmount `json:"token_amount"`
 }
 
 type BridgeRequestDto struct {
-	SrcChainID   uint8
-	DstChainID   uint8
+	DstChainID   string
 	SenderAddr   string
 	Receivers    []BridgingTxReceiver
 	BridgingFee  uint64
