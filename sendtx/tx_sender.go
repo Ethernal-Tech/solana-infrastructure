@@ -64,6 +64,19 @@ func (txSnd *TxSender) CreateTx(
 		return nil, fmt.Errorf("failed to create %s transaction: %w", instructionType, err)
 	}
 
+	_, err = tx.Sign(
+		func(key solana.PublicKey) *solana.PrivateKey {
+			if key.Equals(solanaWallet.PublicKey) {
+				return &solanaWallet.PrivateKey
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	return tx, nil
 }
 
