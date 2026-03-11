@@ -1458,6 +1458,1054 @@ func TestInitialize(t *testing.T) {
 	})
 }
 
+func TestRegisterTokenLockUnlock(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+
+	expectedSig := solana.Signature{}
+	expectedTx := &solana.Transaction{}
+
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txDto := RegisterTokenLockUnlockDto{
+			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
+			TokenMint:         solana.NewWallet().PublicKey().String(),
+			TokenID:           1,
+			MinBridgingAmount: 1_000,
+		}
+
+		expectedSig = solana.Signature{1, 2, 3}
+
+		mockProvider.On("CreateIxTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Instruction"),
+			senderPrivateKey,
+			recentBlockHash,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
+			senderPrivateKey,
+		).Return(&expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeRegisterTokensLockUnlock,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			senderPrivateKey,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		// Pass InitializeDto instead of RegisterTokenLockUnlockDto
+		txDto := InitializeDto{
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{solana.NewWallet().PublicKey().String()},
+			LastID:        0,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeRegisterTokensLockUnlock,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected RegisterTokenLockUnlockDto")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid authority address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		txDto := RegisterTokenLockUnlockDto{
+			AuthorityAddr:     "invalid-address",
+			TokenMint:         solana.NewWallet().PublicKey().String(),
+			TokenID:           1,
+			MinBridgingAmount: 1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeRegisterTokensLockUnlock,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid authority address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid token mint address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		txDto := RegisterTokenLockUnlockDto{
+			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
+			TokenMint:         "invalid-mint",
+			TokenID:           1,
+			MinBridgingAmount: 1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeRegisterTokensLockUnlock,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse token mint address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid token mint public key", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		// Use zero public key which will fail ValidatePublicKey
+		txDto := RegisterTokenLockUnlockDto{
+			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
+			TokenMint:         solana.PublicKey{}.String(),
+			TokenID:           1,
+			MinBridgingAmount: 1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeRegisterTokensLockUnlock,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid token mint specified")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+}
+
+func TestUpdateFeeConfig(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+
+	expectedSig := solana.Signature{}
+	expectedTx := &solana.Transaction{}
+
+	instructionConfig, err := NewInstructionConfig(WithFeeConfigPDA())
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		newTreasury := solana.NewWallet().PublicKey().String()
+		newRelayer := solana.NewWallet().PublicKey().String()
+
+		txDto := UpdateFeeConfigDto{
+			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
+			MinOperationFee: 10,
+			BridgingFee:     20,
+
+			UpdateTreasury:     true,
+			UpdateRelayer:      true,
+			NewTreasuryAddress: newTreasury,
+			NewRelayerAddress:  newRelayer,
+		}
+
+		expectedSig = solana.Signature{4, 5, 6}
+
+		mockProvider.On("CreateIxTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Instruction"),
+			senderPrivateKey,
+			recentBlockHash,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
+			senderPrivateKey,
+		).Return(&expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeUpdateFeeConfig,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			senderPrivateKey,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		// Pass InitializeDto instead of UpdateFeeConfigDto
+		txDto := InitializeDto{
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{solana.NewWallet().PublicKey().String()},
+			LastID:        0,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeUpdateFeeConfig,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected UpdateFeeConfigDto")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid authority address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		txDto := UpdateFeeConfigDto{
+			AuthorityAddr:   "invalid-address",
+			MinOperationFee: 10,
+			BridgingFee:     20,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeUpdateFeeConfig,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid authority address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid new treasury address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		txDto := UpdateFeeConfigDto{
+			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
+			MinOperationFee: 10,
+			BridgingFee:     20,
+
+			UpdateTreasury:     true,
+			NewTreasuryAddress: "invalid-address",
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeUpdateFeeConfig,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid new treasury address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid new relayer address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		txDto := UpdateFeeConfigDto{
+			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
+			MinOperationFee: 10,
+			BridgingFee:     20,
+
+			UpdateRelayer:     true,
+			NewRelayerAddress: "invalid-address",
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeUpdateFeeConfig,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid new relayer address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+}
+
+func TestSOLTransfer(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+
+	expectedSig := solana.Signature{}
+	expectedTx := &solana.Transaction{}
+
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		txDto := SOLTransferDto{
+			SenderPublicKey:   senderPrivateKey.PublicKey().String(),
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+			Amount:            1_000,
+		}
+
+		expectedSig = solana.Signature{1, 2, 3}
+
+		mockProvider.On("CreateIxTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Instruction"),
+			senderPrivateKey,
+			recentBlockHash,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
+			senderPrivateKey,
+		).Return(&expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSOLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			senderPrivateKey,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		// Pass BridgeRequestDto instead of SOLTransferDto
+		txDto := BridgeRequestDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			DstChainID: common.ChainIDPrime,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSOLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected TransferDto")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid sender address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		txDto := SOLTransferDto{
+			SenderPublicKey:   "invalid-sender",
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+			Amount:            1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSOLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse sender public key from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid receiver address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		txDto := SOLTransferDto{
+			SenderPublicKey:   senderPrivateKey.PublicKey().String(),
+			ReceiverPublicKey: "invalid-receiver",
+			Amount:            1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSOLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse receiver public key from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+}
+
+func TestSPLTransfer(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+
+	expectedSig := solana.Signature{}
+	expectedTx := &solana.Transaction{}
+
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		mint := solana.NewWallet().PublicKey().String()
+
+		txDto := SPLTransferDto{
+			SenderPublicKey:   senderWallet.PublicKey.String(),
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+			Amount:            1_000,
+			MintTokenAddress:  mint,
+			TokenDecimals:     9,
+		}
+
+		expectedSig = solana.Signature{1, 2, 3}
+
+		mockProvider.On("CreateIxTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Instruction"),
+			senderPrivateKey,
+			recentBlockHash,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
+			senderPrivateKey,
+		).Return(&expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSPLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			senderPrivateKey,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		// Pass BridgeRequestDto instead of SPLTransferDto
+		txDto := BridgeRequestDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			DstChainID: common.ChainIDPrime,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSPLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected SPLTransferDto")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid sender address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		mint := solana.NewWallet().PublicKey().String()
+
+		txDto := SPLTransferDto{
+			SenderPublicKey:   "invalid-sender",
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+			Amount:            1_000,
+			MintTokenAddress:  mint,
+			TokenDecimals:     9,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSPLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse sender public key from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid receiver address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		mint := solana.NewWallet().PublicKey().String()
+
+		txDto := SPLTransferDto{
+			SenderPublicKey:   senderWallet.PublicKey.String(),
+			ReceiverPublicKey: "invalid-receiver",
+			Amount:            1_000,
+			MintTokenAddress:  mint,
+			TokenDecimals:     9,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSPLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse receiver public key from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid mint address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		txDto := SPLTransferDto{
+			SenderPublicKey:   senderWallet.PublicKey.String(),
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+			Amount:            1_000,
+			MintTokenAddress:  "invalid-mint",
+			TokenDecimals:     9,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeSPLTransfer,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse token mint from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+}
+
+func TestCreateInstruction(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+
+	expectedSig := solana.Signature{}
+	expectedTx := &solana.Transaction{}
+
+	instructionConfig, err := NewInstructionConfig()
+	require.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		mint := solana.NewWallet().PublicKey().String()
+
+		txDto := CreateInstructionDto{
+			SenderPublicKey:   senderWallet.PublicKey.String(),
+			MintTokenAddress:  mint,
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+		}
+
+		expectedSig = solana.Signature{1, 2, 3}
+
+		mockProvider.On("CreateIxTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Instruction"),
+			senderPrivateKey,
+			recentBlockHash,
+		).Return(expectedTx, nil)
+
+		mockProvider.On("ExecuteTransaction",
+			mock.Anything,
+			expectedTx,
+			senderPrivateKey,
+		).Return(&expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionCreateInstruction,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, expectedTx, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			senderPrivateKey,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		// Pass BridgeRequestDto instead of CreateInstructionDto
+		txDto := BridgeRequestDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			DstChainID: common.ChainIDPrime,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionCreateInstruction,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected CreateInstructionDto")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid sender address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		mint := solana.NewWallet().PublicKey().String()
+
+		txDto := CreateInstructionDto{
+			SenderPublicKey:   "invalid-sender",
+			MintTokenAddress:  mint,
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionCreateInstruction,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse sender public key from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid receiver address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		mint := solana.NewWallet().PublicKey().String()
+
+		txDto := CreateInstructionDto{
+			SenderPublicKey:   senderWallet.PublicKey.String(),
+			MintTokenAddress:  mint,
+			ReceiverPublicKey: "invalid-receiver",
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionCreateInstruction,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse receiver public key from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+
+	t.Run("invalid mint address", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		senderWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+		receiverWallet, err := wallet.NewWallet()
+		require.NoError(t, err)
+
+		txDto := CreateInstructionDto{
+			SenderPublicKey:   senderWallet.PublicKey.String(),
+			MintTokenAddress:  "invalid-mint",
+			ReceiverPublicKey: receiverWallet.PublicKey.String(),
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionCreateInstruction,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse token mint from address")
+		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+	})
+}
+
 type MockSenderTxProvider struct {
 	mock.Mock
 }
