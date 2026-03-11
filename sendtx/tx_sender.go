@@ -440,7 +440,7 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 	if err = txSnd.instructionConfig.ApplyOptions(
 		WithFeeConfigPDA(),
 		WithTokenRegistryPDA(tokenMintPublicKey),
-		WithTokenIDGuardPDA(),
+		WithTokenIDGuardPDA(tx.TokenID),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}

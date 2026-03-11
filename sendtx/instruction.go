@@ -1,6 +1,7 @@
 package sendtx
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -123,9 +124,15 @@ func WithTokenRegistryPDA(mintAccount solana.PublicKey) InstructionConfigOption 
 	}
 }
 
-func WithTokenIDGuardPDA() InstructionConfigOption {
+func WithTokenIDGuardPDA(tokenID uint16) InstructionConfigOption {
 	return func(c *InstructionConfig) error {
-		tokenIDGuardPDA, err := c.derivePDA(skyline_program.TOKEN_ID_GUARD_SEED)
+		tokenIDBytes := make([]byte, 2)
+		binary.LittleEndian.PutUint16(tokenIDBytes, tokenID)
+
+		tokenIDGuardPDA, err := c.derivePDA(
+			skyline_program.TOKEN_ID_GUARD_SEED,
+			tokenIDBytes,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to derive token ID guard PDA: %w", err)
 		}
