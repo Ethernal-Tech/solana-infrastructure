@@ -200,11 +200,6 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 			"invalid bridging fee address %s in chain config: %w", txSnd.chainConfig.BridgingFeeAddress.String(), err)
 	}
 
-	if err = txSnd.instructionConfig.ApplyOptions(
-		WithValidatorSetPDA(), WithVaultPDA(), WithTokenRegistryPDA(), WithFeeConfigPDA()); err != nil {
-		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
-	}
-
 	// for now, we only support txs with one receiver
 	receiver := tx.Receivers[0]
 
@@ -216,6 +211,15 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
 	if err != nil {
 		return nil, fmt.Errorf("receiver has an invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
+	}
+
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithValidatorSetPDA(),
+		WithVaultPDA(),
+		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithFeeConfigPDA(),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
 	senderAta, _, err := wallet.FindAssociatedTokenAddress(senderPubKey, tokenMintPublicKey)
@@ -434,7 +438,10 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
-		WithFeeConfigPDA(), WithTokenRegistryPDA(), WithTokenIDGuardPDA()); err != nil {
+		WithFeeConfigPDA(),
+		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithTokenIDGuardPDA(),
+	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 

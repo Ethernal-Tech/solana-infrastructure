@@ -107,9 +107,12 @@ func WithFeeConfigPDA() InstructionConfigOption {
 	}
 }
 
-func WithTokenRegistryPDA() InstructionConfigOption {
+func WithTokenRegistryPDA(mintAccount solana.PublicKey) InstructionConfigOption {
 	return func(c *InstructionConfig) error {
-		tokenRegistryPDA, err := c.derivePDA(skyline_program.TOKEN_REGISTRY_SEED)
+		tokenRegistryPDA, err := c.derivePDA(
+			skyline_program.TOKEN_REGISTRY_SEED,
+			mintAccount[:],
+		)
 		if err != nil {
 			return fmt.Errorf("failed to derive token regirstry PDA: %w", err)
 		}
@@ -132,8 +135,8 @@ func WithTokenIDGuardPDA() InstructionConfigOption {
 		return nil
 	}
 }
-func (c *InstructionConfig) derivePDA(seed []byte) (*solana.PublicKey, error) {
-	pda, _, err := solana.FindProgramAddress([][]byte{seed}, c.programKey)
+func (c *InstructionConfig) derivePDA(seeds ...[]byte) (*solana.PublicKey, error) {
+	pda, _, err := solana.FindProgramAddress(seeds, c.programKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive token regirstry PDA: %w", err)
 	}
