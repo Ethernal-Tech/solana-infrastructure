@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"crypto/ed25519"
-	"strings"
 	"testing"
 
 	"github.com/gagliardetto/solana-go"
@@ -165,9 +164,6 @@ func TestWalletValidatePrivateKey(t *testing.T) {
 }
 
 func TestMarshalSignature(t *testing.T) {
-	wallet, err := NewWallet()
-	require.NoError(t, err)
-
 	// Create a test signature
 	testSignature := solana.Signature{}
 	for i := 0; i < 64; i++ {
@@ -175,7 +171,7 @@ func TestMarshalSignature(t *testing.T) {
 	}
 
 	t.Run("success - marshals signature to JSON", func(t *testing.T) {
-		jsonBytes, err := wallet.MarshalSignature(testSignature)
+		jsonBytes, err := testSignature.MarshalJSON()
 
 		require.NoError(t, err)
 		require.NotNil(t, jsonBytes)
@@ -194,7 +190,7 @@ func TestMarshalSignature(t *testing.T) {
 
 	t.Run("success - with empty signature", func(t *testing.T) {
 		emptySignature := solana.Signature{}
-		jsonBytes, err := wallet.MarshalSignature(emptySignature)
+		jsonBytes, err := emptySignature.MarshalJSON()
 
 		require.NoError(t, err)
 		require.NotNil(t, jsonBytes)
@@ -207,10 +203,10 @@ func TestMarshalSignature(t *testing.T) {
 	})
 
 	t.Run("verify marshal is deterministic", func(t *testing.T) {
-		json1, err := wallet.MarshalSignature(testSignature)
+		json1, err := testSignature.MarshalJSON()
 		require.NoError(t, err)
 
-		json2, err := wallet.MarshalSignature(testSignature)
+		json2, err := testSignature.MarshalJSON()
 		require.NoError(t, err)
 
 		assert.Equal(t, json1, json2)
@@ -218,9 +214,6 @@ func TestMarshalSignature(t *testing.T) {
 }
 
 func TestUnmarshalSignature(t *testing.T) {
-	wallet, err := NewWallet()
-	require.NoError(t, err)
-
 	// Create a test signature
 	testSignature := solana.Signature{}
 	for i := 0; i < 64; i++ {
@@ -228,11 +221,12 @@ func TestUnmarshalSignature(t *testing.T) {
 	}
 
 	// Marshal it first to get valid JSON bytes
-	validJSON, err := wallet.MarshalSignature(testSignature)
+	validJSON, err := testSignature.MarshalJSON()
 	require.NoError(t, err)
 
 	t.Run("success - unmarshals valid signature JSON", func(t *testing.T) {
-		signature, err := wallet.UnmarshalSignature(validJSON)
+		signature := solana.Signature{}
+		err := signature.UnmarshalJSON(validJSON)
 
 		require.NoError(t, err)
 		assert.Equal(t, testSignature, signature)
@@ -240,45 +234,23 @@ func TestUnmarshalSignature(t *testing.T) {
 
 	t.Run("success - with empty signature JSON", func(t *testing.T) {
 		emptySignature := solana.Signature{}
-		emptyJSON, err := wallet.MarshalSignature(emptySignature)
+		emptyJSON, err := emptySignature.MarshalJSON()
 		require.NoError(t, err)
 
-		signature, err := wallet.UnmarshalSignature(emptyJSON)
+		signature := solana.Signature{}
+
+		err = signature.UnmarshalJSON(emptyJSON)
 
 		require.NoError(t, err)
 		assert.Equal(t, emptySignature, signature)
 	})
 
-	t.Run("success - with raw base58 string (no quotes)", func(t *testing.T) {
-		// Get base58 string without JSON quotes
-		base58Str := testSignature.String()
-		rawBytes := []byte(base58Str)
-
-		signature, err := wallet.UnmarshalSignature(rawBytes)
-
-		// This should still work because UnmarshalJSON handles both quoted and unquoted
-		require.NoError(t, err)
-		assert.Equal(t, testSignature, signature)
-	})
-
-	t.Run("error - invalid JSON format", func(t *testing.T) {
-		invalidJSON := []byte(`{"invalid": "json"}`)
-
-		signature, err := wallet.UnmarshalSignature(invalidJSON)
-
-		assert.Error(t, err)
-		assert.Equal(t, solana.Signature{}, signature)
-		// The error could be either JSON parsing error or base58 decoding error
-		assert.True(t,
-			strings.Contains(err.Error(), "invalid character") ||
-				strings.Contains(err.Error(), "invalid base58 digit"),
-			"error should mention invalid format, got: %v", err)
-	})
-
 	t.Run("error - malformed base58 string", func(t *testing.T) {
 		malformedJSON := []byte(`"invalid!@#$"`)
 
-		signature, err := wallet.UnmarshalSignature(malformedJSON)
+		signature := solana.Signature{}
+
+		err := signature.UnmarshalJSON(malformedJSON)
 
 		assert.Error(t, err)
 		assert.Equal(t, solana.Signature{}, signature)
@@ -291,27 +263,30 @@ func TestUnmarshalSignature(t *testing.T) {
 			shortSig[i] = byte(i)
 		}
 
-		shortJSON, err := wallet.MarshalSignature(shortSig)
+		shortJSON, err := shortSig.MarshalJSON()
 		require.NoError(t, err)
 
+		signature := solana.Signature{}
 		// This should still work because Solana signatures are always 64 bytes
 		// The marshaling will pad with zeros
-		signature, err := wallet.UnmarshalSignature(shortJSON)
+		err = signature.UnmarshalJSON(shortJSON)
 		assert.NoError(t, err)
 		assert.Equal(t, shortSig, signature)
 	})
 
 	t.Run("error - empty bytes", func(t *testing.T) {
 		emptyBytes := []byte{}
+		signature := solana.Signature{}
 
-		signature, err := wallet.UnmarshalSignature(emptyBytes)
+		err := signature.UnmarshalJSON(emptyBytes)
 
 		assert.Error(t, err)
 		assert.Equal(t, solana.Signature{}, signature)
 	})
 
 	t.Run("error - nil bytes", func(t *testing.T) {
-		signature, err := wallet.UnmarshalSignature(nil)
+		signature := solana.Signature{}
+		err := signature.UnmarshalJSON(nil)
 
 		assert.Error(t, err)
 		assert.Equal(t, solana.Signature{}, signature)
@@ -332,11 +307,13 @@ func TestUnmarshalSignature(t *testing.T) {
 
 		for _, original := range signatures {
 			// Marshal
-			jsonBytes, err := wallet.MarshalSignature(original)
+			jsonBytes, err := original.MarshalJSON()
 			require.NoError(t, err)
 
+			unmarshaled := solana.Signature{}
+
 			// Unmarshal
-			unmarshaled, err := wallet.UnmarshalSignature(jsonBytes)
+			err = unmarshaled.UnmarshalJSON(jsonBytes)
 			require.NoError(t, err)
 
 			// Verify

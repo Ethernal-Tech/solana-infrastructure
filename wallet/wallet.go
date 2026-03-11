@@ -55,22 +55,6 @@ func (w *Wallet) VerifySignature(payload []byte, signature solana.Signature) err
 	return nil
 }
 
-func (w *Wallet) MarshalSignature(signature solana.Signature) ([]byte, error) {
-	return signature.MarshalJSON()
-}
-
-func (w *Wallet) UnmarshalSignature(signatureBytes []byte) (solana.Signature, error) {
-	var signature solana.Signature
-
-	err := signature.UnmarshalJSON(signatureBytes)
-
-	if err != nil {
-		return solana.SignatureFromBase58(string(signatureBytes))
-	}
-
-	return signature, err
-}
-
 func (w *Wallet) GetKeys() (solana.PrivateKey, solana.PublicKey) {
 	return w.PrivateKey, w.PublicKey
 }
