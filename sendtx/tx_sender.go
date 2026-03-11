@@ -47,6 +47,13 @@ func NewTxSender(txProvider SenderTxProvider,
 	return txSnd
 }
 
+// CreateTx builds a Solana transaction without signing it.
+//
+// The transaction is returned unsigned so batchers can deterministically
+// construct the same transaction payload before producing signatures.
+//
+// If a signature is required, it can be added explicitly by calling tx.Sign(...)
+// after the transaction has been created.
 func (txSnd *TxSender) CreateTx(
 	ctx context.Context,
 	solanaWallet wallet.Wallet,
@@ -62,19 +69,6 @@ func (txSnd *TxSender) CreateTx(
 	tx, err := txSnd.txProvider.CreateIxTransaction(ctx, &instruction, solanaWallet.PrivateKey, recentBlockHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create %s transaction: %w", instructionType, err)
-	}
-
-	_, err = tx.Sign(
-		func(key solana.PublicKey) *solana.PrivateKey {
-			if key.Equals(solanaWallet.PublicKey) {
-				return &solanaWallet.PrivateKey
-			}
-
-			return nil
-		},
-	)
-	if err != nil {
-		return nil, err
 	}
 
 	return tx, nil
