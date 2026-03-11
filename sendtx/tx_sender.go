@@ -130,6 +130,20 @@ func (txSnd *TxSender) buildInstruction(
 		}
 
 		return txSnd.buildInitializeInstruction(tx)
+	case InstructionTypeRegisterTokensLockUnlock:
+		tx, ok := txDto.(RegisterTokenLockUnlockDto)
+		if !ok {
+			return nil, fmt.Errorf("expected RegisterTokenLockUnlockDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildRegisterTokenLockUnlockInstruction(tx)
+	case InstructionTypeUpdateFeeConfig:
+		tx, ok := txDto.(UpdateFeeConfigDto)
+		if !ok {
+			return nil, fmt.Errorf("expected UpdateFeeConfigDto for type %s, got %T", instructionType, txDto)
+		}
+
+		return txSnd.buildUpdateFeeConfigInstruction(tx)
 	case InstructionTypeSOLTransfer:
 		tx, ok := txDto.(SOLTransferDto)
 		if !ok {
@@ -354,8 +368,8 @@ func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instru
 }
 
 func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Instruction, error) {
-	if err := wallet.ValidateAddress(tx.SenderAddr, true); err != nil {
-		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.SenderAddr, err)
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.AuthorityAddr, err)
 	}
 
 	validatorPubKeys := make([]solana.PublicKey, len(tx.Validators))
@@ -373,9 +387,9 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		validatorPubKeys[i] = validatorKey
 	}
 
-	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse sender public key from address %s: %w", tx.SenderAddr, err)
+		return nil, fmt.Errorf("failed to parse sender public key from address %s: %w", tx.AuthorityAddr, err)
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
@@ -395,6 +409,90 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		txSnd.chainConfig.TreasuryAddress,
 		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,
+	)
+}
+
+func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
+	tx RegisterTokenLockUnlockDto) (solana.Instruction, error) {
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
+	}
+
+	authorityPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
+	}
+
+	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(tx.TokenMint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token mint address: %s: %w", tx.TokenMint, err)
+	}
+
+	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
+	}
+
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithFeeConfigPDA(), WithTokenRegistryPDA(), WithTokenIDGuardPDA()); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	return skyline_program.NewRegisterLockUnlockTokenInstruction(
+		tx.TokenID,
+		tx.MinBridgingAmount,
+		authorityPubKey,
+		txSnd.instructionConfig.feeConfigPDA,
+		tokenMintPublicKey,
+		txSnd.instructionConfig.tokenRegistryPDA,
+		txSnd.instructionConfig.tokenIDGuardPDA,
+		txSnd.instructionConfig.systemProgramID,
+	)
+}
+
+func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (solana.Instruction, error) {
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
+	}
+
+	authorityPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
+	}
+
+	newTreasuryAcc, newRelayerAcc := solana.PublicKey{}, solana.PublicKey{}
+
+	if tx.UpdateTreasury && tx.NewTreasuryAddress != "" {
+		if err := wallet.ValidateAddress(tx.NewTreasuryAddress, true); err != nil {
+			return nil, fmt.Errorf("invalid new treasury address: %s: %w", tx.NewTreasuryAddress, err)
+		}
+
+		newTreasuryAcc, err = wallet.PublicKeyFromAddress(tx.NewTreasuryAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse new treasury public key from address %s: %w", tx.NewTreasuryAddress, err)
+		}
+	}
+
+	if tx.UpdateRelayer && tx.NewRelayerAddress != "" {
+		if err := wallet.ValidateAddress(tx.NewRelayerAddress, true); err != nil {
+			return nil, fmt.Errorf("invalid new relayer address: %s: %w", tx.NewRelayerAddress, err)
+		}
+
+		newRelayerAcc, err = wallet.PublicKeyFromAddress(tx.NewRelayerAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse new relayer public key from address %s: %w", tx.NewRelayerAddress, err)
+		}
+	}
+
+	return skyline_program.NewUpdateFeeConfigInstruction(
+		&tx.MinOperationFee,
+		&tx.BridgingFee,
+		&tx.UpdateTreasury,
+		&tx.UpdateRelayer,
+		authorityPubKey,
+		txSnd.instructionConfig.feeConfigPDA,
+		newTreasuryAcc,
+		newRelayerAcc,
 	)
 }
 

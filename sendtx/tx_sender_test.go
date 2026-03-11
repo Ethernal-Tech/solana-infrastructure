@@ -1139,9 +1139,9 @@ func TestInitialize(t *testing.T) {
 		validator4 := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			Validators: []string{validator1, validator2, validator3, validator4},
-			LastID:     0,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{validator1, validator2, validator3, validator4},
+			LastID:        0,
 		}
 
 		expectedSig = solana.Signature{1, 2, 3}
@@ -1198,9 +1198,9 @@ func TestInitialize(t *testing.T) {
 		}
 
 		txDto := InitializeDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			Validators: validators,
-			LastID:     42,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    validators,
+			LastID:        42,
 		}
 
 		expectedSig = solana.Signature{4, 5, 6}
@@ -1251,9 +1251,9 @@ func TestInitialize(t *testing.T) {
 	t.Run("success with empty validators list", func(t *testing.T) {
 		mockProvider := new(MockSenderTxProvider)
 		txDto := InitializeDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			Validators: []string{},
-			LastID:     0,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{},
+			LastID:        0,
 		}
 
 		expectedSig = solana.Signature{7, 8, 9}
@@ -1352,9 +1352,9 @@ func TestInitialize(t *testing.T) {
 		)
 
 		txDto := InitializeDto{
-			SenderAddr: "invalid-address",
-			Validators: []string{solana.NewWallet().PublicKey().String()},
-			LastID:     0,
+			AuthorityAddr: "invalid-address",
+			Validators:    []string{solana.NewWallet().PublicKey().String()},
+			LastID:        0,
 		}
 
 		_, err = txSender.CreateTx(
@@ -1384,9 +1384,9 @@ func TestInitialize(t *testing.T) {
 		validValidator := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			Validators: []string{validValidator, "invalid-address"},
-			LastID:     0,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{validValidator, "invalid-address"},
+			LastID:        0,
 		}
 
 		_, err = txSender.CreateTx(
@@ -1407,9 +1407,9 @@ func TestInitialize(t *testing.T) {
 		validator := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			Validators: []string{validator, validator},
-			LastID:     0,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{validator, validator},
+			LastID:        0,
 		}
 
 		expectedSig = solana.Signature{13, 14, 15}

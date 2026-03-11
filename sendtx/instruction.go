@@ -18,6 +18,10 @@ const (
 	InstructionTypeBridgeTransaction InstructionType = "bridge_transaction"
 	InstructionTypeBridgeVsu         InstructionType = "bridge_vsu"
 	InstructionTypeInitialize        InstructionType = "bridge_initialize"
+
+	InstructionTypeRegisterTokensLockUnlock InstructionType = "register_tokens_lock_unlock"
+	InstructionTypeRegisterTokensMintBurn   InstructionType = "register_tokens_mint_burn"
+	InstructionTypeUpdateFeeConfig          InstructionType = "update_fee_config"
 )
 
 type InstructionConfig struct {
@@ -27,8 +31,10 @@ type InstructionConfig struct {
 	vaultPDA         solana.PublicKey
 	feeConfigPDA     solana.PublicKey
 	tokenRegistryPDA solana.PublicKey
+	tokenIDGuardPDA  solana.PublicKey
 
 	tokenProgramID                     solana.PublicKey
+	tokenMetadataProgramID             solana.PublicKey
 	systemProgramID                    solana.PublicKey
 	splAssociatedTokenAccountProgramID solana.PublicKey
 }
@@ -40,6 +46,7 @@ func NewInstructionConfig(
 	cfg := &InstructionConfig{
 		programKey:                         skyline_program.ProgramID,
 		tokenProgramID:                     solana.TokenProgramID,
+		tokenMetadataProgramID:             solana.TokenMetadataProgramID,
 		systemProgramID:                    solana.SystemProgramID,
 		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
 	}
@@ -113,6 +120,18 @@ func WithTokenRegistryPDA() InstructionConfigOption {
 	}
 }
 
+func WithTokenIDGuardPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		tokenIDGuardPDA, err := c.derivePDA(skyline_program.TOKEN_ID_GUARD_SEED)
+		if err != nil {
+			return fmt.Errorf("failed to derive token ID guard PDA: %w", err)
+		}
+
+		c.tokenIDGuardPDA = *tokenIDGuardPDA
+
+		return nil
+	}
+}
 func (c *InstructionConfig) derivePDA(seed []byte) (*solana.PublicKey, error) {
 	pda, _, err := solana.FindProgramAddress([][]byte{seed}, c.programKey)
 	if err != nil {

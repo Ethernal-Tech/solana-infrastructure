@@ -43,9 +43,27 @@ type BridgeVSUDto struct {
 }
 
 type InitializeDto struct {
-	SenderAddr string
-	Validators []string
-	LastID     uint64
+	AuthorityAddr string
+	Validators    []string
+	LastID        uint64
+}
+
+type RegisterTokenLockUnlockDto struct {
+	AuthorityAddr     string
+	TokenMint         string
+	TokenID           uint16
+	MinBridgingAmount uint64
+}
+
+type UpdateFeeConfigDto struct {
+	AuthorityAddr   string
+	MinOperationFee uint64
+	BridgingFee     uint64
+
+	UpdateTreasury     bool
+	UpdateRelayer      bool
+	NewTreasuryAddress string
+	NewRelayerAddress  string
 }
 
 type SOLTransferDto struct {
