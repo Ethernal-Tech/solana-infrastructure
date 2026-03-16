@@ -14,26 +14,15 @@ import (
 	"github.com/gagliardetto/solana-go/programs/token"
 )
 
-type SenderTxProvider interface {
-	CreateIxTransaction(
-		ctx context.Context, ix *solana.Instruction,
-		feePayer solana.PrivateKey, recentBlockHash solana.Hash,
-	) (*solana.Transaction, error)
-	ExecuteTransaction(
-		ctx context.Context, tx *solana.Transaction, feePayer solana.PrivateKey) (*solana.Signature, error)
-}
-
-var _ SenderTxProvider = (*wallet.Provider)(nil)
-
 type TxSender struct {
-	txProvider        SenderTxProvider
+	txProvider        wallet.ITxProvider
 	minAmountToBridge uint64
 	chainConfig       ChainConfig
 	instructionConfig *InstructionConfig
 	retryOptions      []infracommon.RetryConfigOption
 }
 
-func NewTxSender(txProvider SenderTxProvider,
+func NewTxSender(txProvider wallet.ITxProvider,
 	chainConfig ChainConfig, instructionConfig *InstructionConfig,
 ) *TxSender {
 	txSnd := &TxSender{
@@ -66,9 +55,10 @@ func (txSnd *TxSender) CreateTx(
 		return nil, fmt.Errorf("failed to prepare bridging request instruction: %w", err)
 	}
 
-	tx, err := txSnd.txProvider.CreateIxTransaction(ctx, &instruction, solanaPrivateKey, recentBlockHash)
+	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).
+		SetFeePayer(solanaPrivateKey.PublicKey()).AddInstruction(instruction).Build()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create %s transaction: %w", instructionType, err)
+		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
 
 	return tx, nil
@@ -79,12 +69,12 @@ func (txSnd *TxSender) SendTx(
 	solanaPrivateKey solana.PrivateKey,
 	transaction *solana.Transaction,
 ) (*solana.Signature, error) {
-	signature, err := txSnd.txProvider.ExecuteTransaction(ctx, transaction, solanaPrivateKey)
+	signature, err := txSnd.txProvider.SendTransaction(ctx, transaction)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send %s transaction: %w", transaction.Signatures[0], err)
 	}
 
-	return signature, nil
+	return &signature, nil
 }
 
 func checkFees(config ChainConfig, bridgingFee, operationFee uint64) error {

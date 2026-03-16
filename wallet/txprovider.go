@@ -9,9 +9,39 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
+type ITxProvider interface {
+	IUserDataRetriever
+	IChainDataRetriever
+	ITxSubmiter
+	ITxRetriever
+}
+
+type IUserDataRetriever interface {
+	GetBalance(ctx context.Context, pubKey solana.PublicKey) (uint64, error)
+	GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error)
+}
+
+type IChainDataRetriever interface {
+	GetLatestBlockhash(ctx context.Context) (solana.Hash, error)
+	GetSlot(ctx context.Context) (uint64, error)
+	GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResult, error)
+	GetBlockHeight(ctx context.Context) (uint64, error)
+}
+
+type ITxSubmiter interface {
+	SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error)
+	WaitForSignature(
+		ctx context.Context, sig solana.Signature, commitment rpc.CommitmentType, maxWaitTime time.Duration) error
+}
+
+type ITxRetriever interface {
+	GetSignatureStatus(ctx context.Context, sig solana.Signature) (*rpc.GetSignatureStatusesResult, error)
+	GetSignaturesForAddress(ctx context.Context, address solana.PublicKey, limit int) ([]*rpc.TransactionSignature, error)
+	GetTransaction(ctx context.Context, sig solana.Signature) (*rpc.GetTransactionResult, error)
+}
+
 type Provider struct {
 	rpcClient *rpc.Client
-	// wsClient  *ws.Client
 }
 
 func NewProvider(endpoint string) (*Provider, error) {
@@ -54,73 +84,6 @@ func (p *Provider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) 
 	return res.Value.Blockhash, nil
 }
 
-func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
-	return p.rpcClient.SendTransactionWithOpts(
-		ctx,
-		tx,
-		rpc.TransactionOpts{
-			SkipPreflight:       false,
-			PreflightCommitment: rpc.CommitmentConfirmed,
-		},
-	)
-}
-
-func (p *Provider) CreateIxTransaction(
-	ctx context.Context, ix *solana.Instruction,
-	feePayer solana.PrivateKey, recentBlockHash solana.Hash,
-) (*solana.Transaction, error) {
-	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).
-		SetFeePayer(feePayer.PublicKey()).AddInstruction(*ix).Build()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build transaction: %w", err)
-	}
-
-	return tx, nil
-}
-
-func (p *Provider) ExecuteTransaction(
-	ctx context.Context, tx *solana.Transaction,
-	feePayer solana.PrivateKey) (*solana.Signature, error) {
-	_, err := tx.Sign(func(pubkey solana.PublicKey) *solana.PrivateKey {
-		if pubkey.Equals(feePayer.PublicKey()) {
-			return &feePayer
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign transaction: %w", err)
-	}
-
-	signature, err := p.rpcClient.SendTransactionWithOpts(ctx, tx, rpc.TransactionOpts{
-		SkipPreflight:       false,
-		PreflightCommitment: rpc.CommitmentConfirmed,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to send transaction: %w", err)
-	}
-
-	maxWaitTime := 1 * time.Minute
-
-	if err = p.WaitForSignature(ctx, signature, rpc.CommitmentFinalized, maxWaitTime); err != nil {
-		return nil, fmt.Errorf("error while waiting for signature: %w", err)
-	}
-
-	return &signature, nil
-}
-
-func (p *Provider) GetSignatureStatus(
-
-	ctx context.Context,
-	sig solana.Signature,
-) (*rpc.GetSignatureStatusesResult, error) {
-	return p.rpcClient.GetSignatureStatuses(
-		ctx,
-		true,
-		sig,
-	)
-}
-
 func (p *Provider) GetSlot(ctx context.Context) (uint64, error) {
 	return p.rpcClient.GetSlot(ctx, rpc.CommitmentConfirmed)
 }
@@ -136,6 +99,28 @@ func (p *Provider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResu
 		&rpc.GetBlockOpts{
 			Commitment: rpc.CommitmentConfirmed,
 		},
+	)
+}
+
+func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
+	return p.rpcClient.SendTransactionWithOpts(
+		ctx,
+		tx,
+		rpc.TransactionOpts{
+			SkipPreflight:       false,
+			PreflightCommitment: rpc.CommitmentConfirmed,
+		},
+	)
+}
+
+func (p *Provider) GetSignatureStatus(
+	ctx context.Context,
+	sig solana.Signature,
+) (*rpc.GetSignatureStatusesResult, error) {
+	return p.rpcClient.GetSignatureStatuses(
+		ctx,
+		true,
+		sig,
 	)
 }
 

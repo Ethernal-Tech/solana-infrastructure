@@ -5,10 +5,12 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/test-go/testify/assert"
@@ -106,23 +108,12 @@ func TestBridgingRequest(t *testing.T) {
 			},
 		}
 
-		expectedTx := &solana.Transaction{}
 		expectedSig = solana.Signature{1, 2, 3}
 
-		// Mock CreateIxTransaction
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		// Mock ExecuteTransaction for SendTx
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -134,7 +125,6 @@ func TestBridgingRequest(t *testing.T) {
 			instructionConfig,
 		)
 
-		// CreateTx
 		tx, err := txSender.CreateTx(
 			ctx,
 			senderPrivateKey,
@@ -144,9 +134,8 @@ func TestBridgingRequest(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
-		// SendTx
 		sig, err := txSender.SendTx(
 			ctx,
 			senderPrivateKey,
@@ -283,7 +272,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		require.Error(t, err, "amount to bridge is less than the minimum required")
 		require.Nil(t, sig)
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("insuficient bridging fee", func(t *testing.T) {
@@ -326,7 +315,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		require.Error(t, err, "fees do not meet the minimum requirements")
 		require.Nil(t, sig)
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("insuficient operation fee", func(t *testing.T) {
@@ -371,7 +360,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		require.Error(t, err, "fees do not meet the minimum requirements")
 		require.Nil(t, sig)
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
@@ -445,54 +434,7 @@ func TestBridgingRequest(t *testing.T) {
 		)
 
 		require.Error(t, err, "invalid sender address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
-	})
-
-	t.Run("provider error", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
-
-		txDto := BridgeRequestDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			DstChainID: common.ChainIDPrime,
-			Receivers: []BridgingTxReceiver{
-				{
-					Address: "0x1234567890123456789012345678901234567890",
-					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: tokenMint,
-					},
-				},
-			},
-		}
-
-		expectedErr := errors.New("mocked create error")
-		mockProvider.On("CreateIxTransaction",
-			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(nil, expectedErr)
-
-		txSender := NewTxSender(
-			mockProvider,
-			ChainConfig{
-				TreasuryAddress:    treasuryWallet.PublicKey,
-				BridgingFeeAddress: feeWallet.PublicKey,
-			},
-			instructionConfig,
-		)
-
-		_, err = txSender.CreateTx(
-			ctx,
-			senderPrivateKey,
-			InstructionTypeBridgingRequest,
-			recentBlockHash,
-			txDto,
-		)
-
-		require.Error(t, err, "failed to create bridging request transaction")
-		mockProvider.AssertExpectations(t)
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid token mint in receiver", func(t *testing.T) {
@@ -531,7 +473,71 @@ func TestBridgingRequest(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid token mint specified")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+
+	t.Run("provider error on SendTx", func(t *testing.T) {
+		mockProvider := new(MockSenderTxProvider)
+		tokenMint := solana.NewWallet().PublicKey().String()
+
+		txDto := BridgeRequestDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			DstChainID: common.ChainIDPrime,
+			Receivers: []BridgingTxReceiver{
+				{
+					Address: "0x1234567890123456789012345678901234567890",
+					TokenAmount: wallet.TokenAmount{
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: tokenMint,
+					},
+				},
+			},
+		}
+
+		expectedErr := errors.New("mocked send error")
+		mockProvider.On("SendTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(solana.Signature{}, expectedErr)
+
+		txSender := NewTxSender(
+			mockProvider,
+			ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+			instructionConfig,
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey,
+			InstructionTypeBridgingRequest,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, tx)
+
+		_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+			if key.Equals(senderPrivateKey.PublicKey()) {
+				return &senderPrivateKey
+			}
+
+			return nil
+		})
+		require.NoError(t, err)
+
+		_, err = txSender.SendTx(
+			ctx,
+			senderPrivateKey,
+			tx,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to send")
+		mockProvider.AssertExpectations(t)
 	})
 }
 
@@ -572,21 +578,12 @@ func TestBridgingTransaction(t *testing.T) {
 			},
 		}
 
-		expectedTx := &solana.Transaction{}
 		expectedSig = solana.Signature{4, 5, 6}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -606,7 +603,7 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -654,7 +651,7 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		require.Error(t, err, "expected BridgeTransactionDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
@@ -691,7 +688,7 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		require.Error(t, err, "invalid receiver address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
@@ -728,7 +725,7 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		require.Error(t, err, "invalid receiver address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
 
@@ -762,21 +759,12 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:              42,
 		}
 
-		expectedTx := &solana.Transaction{}
 		expectedSig = solana.Signature{4, 5, 6}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -796,7 +784,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -821,21 +809,12 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:                43,
 		}
 
-		expectedTx := &solana.Transaction{}
 		expectedSig = solana.Signature{4, 5, 6}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -855,7 +834,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -881,21 +860,12 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:                44,
 		}
 
-		expectedTx := &solana.Transaction{}
 		expectedSig = solana.Signature{7, 8, 9}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -915,7 +885,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -964,7 +934,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected BridgeVSUDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
@@ -994,7 +964,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid sender address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid adding validator address", func(t *testing.T) {
@@ -1024,7 +994,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid adding validator address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid removing validator address", func(t *testing.T) {
@@ -1054,11 +1024,19 @@ func TestBridgeVSU(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid removing validator address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("empty both adding and removing", func(t *testing.T) {
 		mockProvider := new(MockSenderTxProvider)
+
+		expectedSig = solana.Signature{10, 11, 12}
+
+		mockProvider.On("SendTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
+
 		txSender := NewTxSender(
 			mockProvider,
 			ChainConfig{
@@ -1073,22 +1051,6 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:    1,
 		}
 
-		expectedTx := &solana.Transaction{}
-		expectedSig = solana.Signature{10, 11, 12}
-
-		mockProvider.On("CreateIxTransaction",
-			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
-
 		tx, err := txSender.CreateTx(
 			ctx,
 			senderPrivateKey,
@@ -1098,7 +1060,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1126,7 +1088,6 @@ func TestInitialize(t *testing.T) {
 	recentBlockHash := solana.Hash{}
 
 	expectedSig := solana.Signature{}
-	expectedTx := &solana.Transaction{}
 
 	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
@@ -1146,18 +1107,10 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{1, 2, 3}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1177,7 +1130,7 @@ func TestInitialize(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1205,18 +1158,10 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{4, 5, 6}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1236,7 +1181,7 @@ func TestInitialize(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1258,18 +1203,10 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{7, 8, 9}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1289,7 +1226,7 @@ func TestInitialize(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1337,7 +1274,7 @@ func TestInitialize(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected InitializeDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
@@ -1367,7 +1304,7 @@ func TestInitialize(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid sender address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid validator address", func(t *testing.T) {
@@ -1399,7 +1336,7 @@ func TestInitialize(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid validator address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("duplicate validators", func(t *testing.T) {
@@ -1414,18 +1351,10 @@ func TestInitialize(t *testing.T) {
 
 		expectedSig = solana.Signature{13, 14, 15}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1445,7 +1374,7 @@ func TestInitialize(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1473,7 +1402,6 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	recentBlockHash := solana.Hash{}
 
 	expectedSig := solana.Signature{}
-	expectedTx := &solana.Transaction{}
 
 	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
@@ -1490,18 +1418,10 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		expectedSig = solana.Signature{1, 2, 3}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1521,7 +1441,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1563,7 +1483,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected RegisterTokenLockUnlockDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid authority address", func(t *testing.T) {
@@ -1595,7 +1515,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid authority address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid token mint address", func(t *testing.T) {
@@ -1627,7 +1547,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse token mint address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid token mint public key", func(t *testing.T) {
@@ -1660,7 +1580,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid token mint specified")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
 
@@ -1679,7 +1599,6 @@ func TestUpdateFeeConfig(t *testing.T) {
 	recentBlockHash := solana.Hash{}
 
 	expectedSig := solana.Signature{}
-	expectedTx := &solana.Transaction{}
 
 	instructionConfig, err := NewInstructionConfig(WithFeeConfigPDA())
 	require.NoError(t, err)
@@ -1703,18 +1622,10 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		expectedSig = solana.Signature{4, 5, 6}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1734,7 +1645,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1776,7 +1687,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected UpdateFeeConfigDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid authority address", func(t *testing.T) {
@@ -1807,7 +1718,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid authority address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid new treasury address", func(t *testing.T) {
@@ -1841,7 +1752,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid new treasury address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid new relayer address", func(t *testing.T) {
@@ -1875,7 +1786,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid new relayer address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
 
@@ -1894,7 +1805,6 @@ func TestSOLTransfer(t *testing.T) {
 	recentBlockHash := solana.Hash{}
 
 	expectedSig := solana.Signature{}
-	expectedTx := &solana.Transaction{}
 
 	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
@@ -1913,18 +1823,10 @@ func TestSOLTransfer(t *testing.T) {
 
 		expectedSig = solana.Signature{1, 2, 3}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1944,7 +1846,7 @@ func TestSOLTransfer(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -1985,7 +1887,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected TransferDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
@@ -2019,7 +1921,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse sender public key from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
@@ -2050,7 +1952,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse receiver public key from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
 
@@ -2069,7 +1971,6 @@ func TestSPLTransfer(t *testing.T) {
 	recentBlockHash := solana.Hash{}
 
 	expectedSig := solana.Signature{}
-	expectedTx := &solana.Transaction{}
 
 	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
@@ -2094,18 +1995,10 @@ func TestSPLTransfer(t *testing.T) {
 
 		expectedSig = solana.Signature{1, 2, 3}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2125,7 +2018,7 @@ func TestSPLTransfer(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -2166,7 +2059,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected SPLTransferDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
@@ -2204,7 +2097,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse sender public key from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
@@ -2242,7 +2135,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse receiver public key from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid mint address", func(t *testing.T) {
@@ -2280,7 +2173,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse token mint from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
 
@@ -2299,7 +2192,6 @@ func TestCreateInstruction(t *testing.T) {
 	recentBlockHash := solana.Hash{}
 
 	expectedSig := solana.Signature{}
-	expectedTx := &solana.Transaction{}
 
 	instructionConfig, err := NewInstructionConfig()
 	require.NoError(t, err)
@@ -2322,18 +2214,10 @@ func TestCreateInstruction(t *testing.T) {
 
 		expectedSig = solana.Signature{1, 2, 3}
 
-		mockProvider.On("CreateIxTransaction",
+		mockProvider.On("SendTransaction",
 			mock.Anything,
-			mock.AnythingOfType("*solana.Instruction"),
-			senderPrivateKey,
-			recentBlockHash,
-		).Return(expectedTx, nil)
-
-		mockProvider.On("ExecuteTransaction",
-			mock.Anything,
-			expectedTx,
-			senderPrivateKey,
-		).Return(&expectedSig, nil)
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2353,7 +2237,7 @@ func TestCreateInstruction(t *testing.T) {
 		)
 
 		require.NoError(t, err)
-		require.Equal(t, expectedTx, tx)
+		require.NotNil(t, tx)
 
 		sig, err := txSender.SendTx(
 			ctx,
@@ -2394,7 +2278,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "expected CreateInstructionDto")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
@@ -2430,7 +2314,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse sender public key from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
@@ -2466,7 +2350,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse receiver public key from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
 	t.Run("invalid mint address", func(t *testing.T) {
@@ -2502,7 +2386,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to parse token mint from address")
-		mockProvider.AssertNotCalled(t, "ExecuteInstruction")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
 
@@ -2510,20 +2394,100 @@ type MockSenderTxProvider struct {
 	mock.Mock
 }
 
-func (m *MockSenderTxProvider) CreateIxTransaction(ctx context.Context, ix *solana.Instruction, feePayer solana.PrivateKey, recentBlockHash solana.Hash) (*solana.Transaction, error) {
-	args := m.Called(ctx, ix, feePayer, recentBlockHash)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
+var _ wallet.ITxProvider = (*MockSenderTxProvider)(nil)
 
-	return args.Get(0).(*solana.Transaction), args.Error(1)
+func (m *MockSenderTxProvider) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
+	args := m.Called(ctx, tx)
+
+	return args.Get(0).(solana.Signature), args.Error(1)
 }
 
-func (m *MockSenderTxProvider) ExecuteTransaction(ctx context.Context, tx *solana.Transaction, feePayer solana.PrivateKey) (*solana.Signature, error) {
-	args := m.Called(ctx, tx, feePayer)
+func (m *MockSenderTxProvider) SimulateTransaction(ctx context.Context, tx *solana.Transaction) (*rpc.SimulateTransactionResponse, error) {
+	args := m.Called(ctx, tx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 
-	return args.Get(0).(*solana.Signature), args.Error(1)
+	return args.Get(0).(*rpc.SimulateTransactionResponse), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) WaitForSignature(ctx context.Context, sig solana.Signature, commitment rpc.CommitmentType, maxWaitTime time.Duration) error {
+	args := m.Called(ctx, sig, commitment, maxWaitTime)
+
+	return args.Error(0)
+}
+
+func (m *MockSenderTxProvider) RequestSolAirdrop(ctx context.Context, address solana.PublicKey, amount uint64) (solana.Signature, error) {
+	args := m.Called(ctx, address, amount)
+
+	return args.Get(0).(solana.Signature), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetBalance(ctx context.Context, pubKey solana.PublicKey) (uint64, error) {
+	args := m.Called(ctx, pubKey)
+
+	return args.Get(0).(uint64), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error) {
+	args := m.Called(ctx, pubkey)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*rpc.GetAccountInfoResult), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) {
+	args := m.Called(ctx)
+
+	return args.Get(0).(solana.Hash), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetSlot(ctx context.Context) (uint64, error) {
+	args := m.Called(ctx)
+
+	return args.Get(0).(uint64), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResult, error) {
+	args := m.Called(ctx, slot)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*rpc.GetBlockResult), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetBlockHeight(ctx context.Context) (uint64, error) {
+	args := m.Called(ctx)
+
+	return args.Get(0).(uint64), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetSignatureStatus(ctx context.Context, sig solana.Signature) (*rpc.GetSignatureStatusesResult, error) {
+	args := m.Called(ctx, sig)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*rpc.GetSignatureStatusesResult), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetSignaturesForAddress(ctx context.Context, address solana.PublicKey, limit int) ([]*rpc.TransactionSignature, error) {
+	args := m.Called(ctx, address, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).([]*rpc.TransactionSignature), args.Error(1)
+}
+
+func (m *MockSenderTxProvider) GetTransaction(ctx context.Context, sig solana.Signature) (*rpc.GetTransactionResult, error) {
+	args := m.Called(ctx, sig)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*rpc.GetTransactionResult), args.Error(1)
 }
