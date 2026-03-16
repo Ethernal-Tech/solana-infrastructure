@@ -45,7 +45,7 @@ func NewTxSender(txProvider wallet.ITxProvider,
 // after the transaction has been created.
 func (txSnd *TxSender) CreateTx(
 	ctx context.Context,
-	solanaPrivateKey solana.PrivateKey,
+	solanaPublicKey solana.PublicKey,
 	instructionType InstructionType,
 	recentBlockHash solana.Hash,
 	txDto interface{},
@@ -56,7 +56,7 @@ func (txSnd *TxSender) CreateTx(
 	}
 
 	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).
-		SetFeePayer(solanaPrivateKey.PublicKey()).AddInstruction(instruction).Build()
+		SetFeePayer(solanaPublicKey).AddInstruction(instruction).Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
@@ -66,12 +66,11 @@ func (txSnd *TxSender) CreateTx(
 
 func (txSnd *TxSender) SendTx(
 	ctx context.Context,
-	solanaPrivateKey solana.PrivateKey,
-	transaction *solana.Transaction,
+	signedTransaction *solana.Transaction,
 ) (*solana.Signature, error) {
-	signature, err := txSnd.txProvider.SendTransaction(ctx, transaction)
+	signature, err := txSnd.txProvider.SendTransaction(ctx, signedTransaction)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send %s transaction: %w", transaction.Signatures[0], err)
+		return nil, fmt.Errorf("failed to send %s transaction: %w", signedTransaction.Signatures[0], err)
 	}
 
 	return &signature, nil

@@ -11,6 +11,12 @@ type MockStorageHandler struct {
 
 var _ StorageHandler = (*MockStorageHandler)(nil)
 
+func (m *MockStorageHandler) Close() error {
+	args := m.Called()
+
+	return args.Error(0)
+}
+
 func (m *MockStorageHandler) ReadSlot() (uint64, error) {
 	args := m.Called()
 
@@ -31,8 +37,8 @@ func (m *MockStorageHandler) StoreBlock(tx StorageTransaction, slot uint64, hash
 }
 
 func (m *MockStorageHandler) StoreEvent(
-	tx StorageTransaction, slot uint64, programID solana.PublicKey, eventName string, eventData any) error {
-	args := m.Called(tx, slot, programID, eventName, eventData)
+	tx StorageTransaction, slot uint64, txSignature solana.Signature, programID solana.PublicKey, eventName string, eventData any) error {
+	args := m.Called(tx, slot, txSignature, programID, eventName, eventData)
 
 	return args.Error(0)
 }

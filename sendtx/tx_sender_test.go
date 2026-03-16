@@ -62,7 +62,7 @@ func TestNewTxSender(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			"wrongIxType",
 			recentBlockHash,
 			interface{}(nil),
@@ -127,7 +127,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -138,7 +138,6 @@ func TestBridgingRequest(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -180,7 +179,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		sig, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -223,7 +222,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		sig, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -264,7 +263,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		sig, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -307,7 +306,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		sig, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -352,7 +351,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		sig, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -391,7 +390,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -427,7 +426,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -465,7 +464,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -511,7 +510,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgingRequest,
 			recentBlockHash,
 			txDto,
@@ -531,7 +530,6 @@ func TestBridgingRequest(t *testing.T) {
 
 		_, err = txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -596,7 +594,7 @@ func TestBridgingTransaction(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeTransaction,
 			recentBlockHash,
 			txDto,
@@ -607,7 +605,6 @@ func TestBridgingTransaction(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -644,7 +641,7 @@ func TestBridgingTransaction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeTransaction,
 			recentBlockHash,
 			txDto,
@@ -681,7 +678,7 @@ func TestBridgingTransaction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeTransaction,
 			recentBlockHash,
 			txDto,
@@ -718,7 +715,7 @@ func TestBridgingTransaction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeTransaction,
 			recentBlockHash,
 			txDto,
@@ -777,7 +774,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -788,7 +785,6 @@ func TestBridgeVSU(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -827,7 +823,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -838,7 +834,6 @@ func TestBridgeVSU(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -878,7 +873,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -889,7 +884,6 @@ func TestBridgeVSU(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -926,7 +920,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -956,7 +950,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -986,7 +980,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -1016,7 +1010,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -1053,7 +1047,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeBridgeVsu,
 			recentBlockHash,
 			txDto,
@@ -1064,7 +1058,6 @@ func TestBridgeVSU(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 		require.NoError(t, err)
@@ -1123,7 +1116,7 @@ func TestInitialize(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1134,7 +1127,6 @@ func TestInitialize(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 		require.NoError(t, err)
@@ -1174,7 +1166,7 @@ func TestInitialize(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1185,7 +1177,6 @@ func TestInitialize(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 		require.NoError(t, err)
@@ -1219,7 +1210,7 @@ func TestInitialize(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1230,7 +1221,6 @@ func TestInitialize(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 		require.NoError(t, err)
@@ -1266,7 +1256,7 @@ func TestInitialize(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1296,7 +1286,7 @@ func TestInitialize(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1328,7 +1318,7 @@ func TestInitialize(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1367,7 +1357,7 @@ func TestInitialize(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeInitialize,
 			recentBlockHash,
 			txDto,
@@ -1378,7 +1368,6 @@ func TestInitialize(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 		require.NoError(t, err)
@@ -1434,7 +1423,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeRegisterTokensLockUnlock,
 			recentBlockHash,
 			txDto,
@@ -1445,7 +1434,6 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -1475,7 +1463,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeRegisterTokensLockUnlock,
 			recentBlockHash,
 			txDto,
@@ -1507,7 +1495,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeRegisterTokensLockUnlock,
 			recentBlockHash,
 			txDto,
@@ -1539,7 +1527,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeRegisterTokensLockUnlock,
 			recentBlockHash,
 			txDto,
@@ -1572,7 +1560,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeRegisterTokensLockUnlock,
 			recentBlockHash,
 			txDto,
@@ -1638,7 +1626,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeUpdateFeeConfig,
 			recentBlockHash,
 			txDto,
@@ -1649,7 +1637,6 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -1679,7 +1666,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeUpdateFeeConfig,
 			recentBlockHash,
 			txDto,
@@ -1710,7 +1697,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeUpdateFeeConfig,
 			recentBlockHash,
 			txDto,
@@ -1744,7 +1731,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeUpdateFeeConfig,
 			recentBlockHash,
 			txDto,
@@ -1778,7 +1765,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeUpdateFeeConfig,
 			recentBlockHash,
 			txDto,
@@ -1839,7 +1826,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSOLTransfer,
 			recentBlockHash,
 			txDto,
@@ -1850,7 +1837,6 @@ func TestSOLTransfer(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -1879,7 +1865,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSOLTransfer,
 			recentBlockHash,
 			txDto,
@@ -1913,7 +1899,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSOLTransfer,
 			recentBlockHash,
 			txDto,
@@ -1944,7 +1930,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSOLTransfer,
 			recentBlockHash,
 			txDto,
@@ -2011,7 +1997,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSPLTransfer,
 			recentBlockHash,
 			txDto,
@@ -2022,7 +2008,6 @@ func TestSPLTransfer(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -2051,7 +2036,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSPLTransfer,
 			recentBlockHash,
 			txDto,
@@ -2089,7 +2074,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSPLTransfer,
 			recentBlockHash,
 			txDto,
@@ -2127,7 +2112,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSPLTransfer,
 			recentBlockHash,
 			txDto,
@@ -2165,7 +2150,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionTypeSPLTransfer,
 			recentBlockHash,
 			txDto,
@@ -2230,7 +2215,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		tx, err := txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionCreateInstruction,
 			recentBlockHash,
 			txDto,
@@ -2241,7 +2226,6 @@ func TestCreateInstruction(t *testing.T) {
 
 		sig, err := txSender.SendTx(
 			ctx,
-			senderPrivateKey,
 			tx,
 		)
 
@@ -2270,7 +2254,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionCreateInstruction,
 			recentBlockHash,
 			txDto,
@@ -2306,7 +2290,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionCreateInstruction,
 			recentBlockHash,
 			txDto,
@@ -2342,7 +2326,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionCreateInstruction,
 			recentBlockHash,
 			txDto,
@@ -2378,7 +2362,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		_, err = txSender.CreateTx(
 			ctx,
-			senderPrivateKey,
+			senderPrivateKey.PublicKey(),
 			InstructionCreateInstruction,
 			recentBlockHash,
 			txDto,

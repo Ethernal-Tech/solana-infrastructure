@@ -68,11 +68,11 @@ type StorageHandler interface {
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
 	// backend, see [ApplyTransaction] for more information. The remaining arguments are, in order:
-	// the slot number in which the event occurred, the public key (address) of the Solana program
-	// that emitted the event, the event name as registered in the [ProgramEventSpecs] config, and
-	// the deserialized event itself. If the method returns an error, the tracker will terminate
-	// immediately.
-	StoreEvent(StorageTransaction, uint64, solana.PublicKey, string, any) error
+	// the slot number in which the event occurred, the signature of the transaction that generated
+	// the event, the public key (address) of the Solana program that emitted the event, the event
+	// name as registered in the [ProgramEventSpecs] config, and the deserialized event itself. If
+	// the method returns an error, the tracker will terminate immediately.
+	StoreEvent(StorageTransaction, uint64, solana.Signature, solana.PublicKey, string, any) error
 
 	// UseTransactions is invoked exactly once by the tracker during startup, that is, when the
 	// [Start] method is called. This method should return true if the storage backend supports
@@ -97,6 +97,8 @@ type StorageHandler interface {
 	// for a given slot are persisted together atomically, or none of them are saved if any
 	// operation fails. If this method returns an error, the tracker will terminate immediately.
 	ApplyTransaction(func(StorageTransaction) error, []func(StorageTransaction) error) error
+
+	Close() error
 }
 
 type BoltStorageHandler struct {
@@ -108,11 +110,12 @@ var _ StorageHandler = &BoltStorageHandler{}
 
 // EventRecord represents a stored event with metadata
 type EventRecord struct {
-	ID        uint64                 `json:"id"`
-	Slot      uint64                 `json:"slot"`
-	Program   string                 `json:"program"`
-	EventType string                 `json:"event_type"`
-	Data      map[string]interface{} `json:"data"`
+	ID          uint64                 `json:"id"`
+	Slot        uint64                 `json:"slot"`
+	TxSignature string                 `json:"tx_signature"`
+	Program     string                 `json:"program"`
+	EventType   string                 `json:"event_type"`
+	Data        map[string]interface{} `json:"data"`
 }
 
 type BlockPoint struct {
@@ -288,6 +291,7 @@ func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, slot uint64, hash
 func (b *BoltStorageHandler) StoreEvent(
 	tx StorageTransaction,
 	slot uint64,
+	txSignature solana.Signature,
 	programID solana.PublicKey,
 	eventName string,
 	eventData any) error {
@@ -318,11 +322,12 @@ func (b *BoltStorageHandler) StoreEvent(
 
 		// Create EventRecord
 		record := EventRecord{
-			ID:        eventID,
-			Slot:      slot,
-			Program:   programID.String(),
-			EventType: eventName,
-			Data:      dataMap,
+			ID:          eventID,
+			Slot:        slot,
+			TxSignature: txSignature.String(),
+			Program:     programID.String(),
+			EventType:   eventName,
+			Data:        dataMap,
 		}
 
 		// Marshal EventRecord
