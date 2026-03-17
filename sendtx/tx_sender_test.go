@@ -18,7 +18,7 @@ import (
 
 func TestNewTxSender(t *testing.T) {
 	ctx := context.Background()
-	mockProvider := new(MockSenderTxProvider)
+	mockProvider := new(MockTxSubmiter)
 
 	senderPrivateKey, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestBridgingRequest(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -135,7 +135,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid treasury address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		tokenMint := solana.NewWallet().PublicKey().String()
 
@@ -175,7 +175,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid bridging fee address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		tokenMint := solana.NewWallet().PublicKey().String()
 
@@ -214,7 +214,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("insuficient bridging amount", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -256,7 +256,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("insuficient bridging fee", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -298,7 +298,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("insuficient operation fee", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -342,7 +342,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -378,7 +378,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -414,7 +414,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid token mint in receiver", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txDto := BridgeRequestDto{
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
@@ -452,7 +452,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("provider error on SendTx", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -530,7 +530,7 @@ func TestBridgingTransaction(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		receiverPubKey := solana.NewWallet().PublicKey()
 		tokenMint := solana.NewWallet().PublicKey().String()
 
@@ -585,7 +585,7 @@ func TestBridgingTransaction(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -622,7 +622,7 @@ func TestBridgingTransaction(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -658,7 +658,7 @@ func TestBridgingTransaction(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -711,7 +711,7 @@ func TestBridgeVSU(t *testing.T) {
 
 	//nolint:dupl
 	t.Run("success with adding validators", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 
@@ -759,7 +759,7 @@ func TestBridgeVSU(t *testing.T) {
 
 	//nolint:dupl
 	t.Run("success with removing validators", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 
@@ -806,7 +806,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("success with both adding and removing", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 		validator3 := solana.NewWallet().PublicKey().String()
@@ -855,7 +855,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -893,7 +893,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -922,7 +922,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid adding validator address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -951,7 +951,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid removing validator address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -980,7 +980,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("empty both adding and removing", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		expectedSig = solana.Signature{10, 11, 12}
 
@@ -1040,7 +1040,7 @@ func TestInitialize(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success with 4 validators", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 		validator3 := solana.NewWallet().PublicKey().String()
@@ -1088,7 +1088,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("success with 10 validators", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		validators := make([]string, 10)
 
 		for i := 0; i < 10; i++ {
@@ -1137,7 +1137,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("success with empty validators list", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txDto := InitializeDto{
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{},
@@ -1180,7 +1180,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1218,7 +1218,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1247,7 +1247,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid validator address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1278,7 +1278,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("duplicate validators", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 		validator := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
@@ -1340,7 +1340,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txDto := RegisterTokenLockUnlockDto{
 			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
@@ -1386,7 +1386,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1417,7 +1417,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid authority address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1448,7 +1448,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid token mint address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1479,7 +1479,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid token mint public key", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1528,7 +1528,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		newTreasury := solana.NewWallet().PublicKey().String()
 		newRelayer := solana.NewWallet().PublicKey().String()
@@ -1581,7 +1581,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1612,7 +1612,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid authority address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1642,7 +1642,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid new treasury address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1675,7 +1675,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid new relayer address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1725,7 +1725,7 @@ func TestSOLTransfer(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		receiverWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -1773,7 +1773,7 @@ func TestSOLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1803,7 +1803,7 @@ func TestSOLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1836,7 +1836,7 @@ func TestSOLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1883,7 +1883,7 @@ func TestSPLTransfer(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -1937,7 +1937,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1967,7 +1967,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2004,7 +2004,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2041,7 +2041,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid mint address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2095,7 +2095,7 @@ func TestCreateInstruction(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -2147,7 +2147,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2177,7 +2177,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2212,7 +2212,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2247,7 +2247,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid mint address", func(t *testing.T) {
-		mockProvider := new(MockSenderTxProvider)
+		mockProvider := new(MockTxSubmiter)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2282,104 +2282,20 @@ func TestCreateInstruction(t *testing.T) {
 	})
 }
 
-type MockSenderTxProvider struct {
+type MockTxSubmiter struct {
 	mock.Mock
 }
 
-var _ wallet.ITxProvider = (*MockSenderTxProvider)(nil)
+var _ wallet.ITxSubmiter = (*MockTxSubmiter)(nil)
 
-func (m *MockSenderTxProvider) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
+func (m *MockTxSubmiter) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
 	args := m.Called(ctx, tx)
 
 	return args.Get(0).(solana.Signature), args.Error(1)
 }
 
-func (m *MockSenderTxProvider) SimulateTransaction(ctx context.Context, tx *solana.Transaction) (*rpc.SimulateTransactionResponse, error) {
-	args := m.Called(ctx, tx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-
-	return args.Get(0).(*rpc.SimulateTransactionResponse), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) WaitForSignature(ctx context.Context, sig solana.Signature, commitment rpc.CommitmentType, maxWaitTime time.Duration) error {
+func (m *MockTxSubmiter) WaitForSignature(ctx context.Context, sig solana.Signature, commitment rpc.CommitmentType, maxWaitTime time.Duration) error {
 	args := m.Called(ctx, sig, commitment, maxWaitTime)
 
 	return args.Error(0)
-}
-
-func (m *MockSenderTxProvider) RequestSolAirdrop(ctx context.Context, address solana.PublicKey, amount uint64) (solana.Signature, error) {
-	args := m.Called(ctx, address, amount)
-
-	return args.Get(0).(solana.Signature), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetBalance(ctx context.Context, pubKey solana.PublicKey) (uint64, error) {
-	args := m.Called(ctx, pubKey)
-
-	return args.Get(0).(uint64), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error) {
-	args := m.Called(ctx, pubkey)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-
-	return args.Get(0).(*rpc.GetAccountInfoResult), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) {
-	args := m.Called(ctx)
-
-	return args.Get(0).(solana.Hash), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetSlot(ctx context.Context) (uint64, error) {
-	args := m.Called(ctx)
-
-	return args.Get(0).(uint64), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResult, error) {
-	args := m.Called(ctx, slot)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-
-	return args.Get(0).(*rpc.GetBlockResult), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetBlockHeight(ctx context.Context) (uint64, error) {
-	args := m.Called(ctx)
-
-	return args.Get(0).(uint64), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetSignatureStatus(ctx context.Context, sig solana.Signature) (*rpc.GetSignatureStatusesResult, error) {
-	args := m.Called(ctx, sig)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-
-	return args.Get(0).(*rpc.GetSignatureStatusesResult), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetSignaturesForAddress(ctx context.Context, address solana.PublicKey, limit int) ([]*rpc.TransactionSignature, error) {
-	args := m.Called(ctx, address, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-
-	return args.Get(0).([]*rpc.TransactionSignature), args.Error(1)
-}
-
-func (m *MockSenderTxProvider) GetTransaction(ctx context.Context, sig solana.Signature) (*rpc.GetTransactionResult, error) {
-	args := m.Called(ctx, sig)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-
-	return args.Get(0).(*rpc.GetTransactionResult), args.Error(1)
 }

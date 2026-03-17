@@ -15,13 +15,13 @@ import (
 )
 
 type TxSender struct {
-	txProvider        wallet.ITxProvider
+	txProvider        wallet.ITxSubmiter
 	chainConfig       *ChainConfig
 	instructionConfig *InstructionConfig
 	retryOptions      []infracommon.RetryConfigOption
 }
 
-func NewTxSender(txProvider wallet.ITxProvider, chainConfig *ChainConfig) *TxSender {
+func NewTxSender(txProvider wallet.ITxSubmiter, chainConfig *ChainConfig) *TxSender {
 	txSnd := &TxSender{
 		txProvider:  txProvider,
 		chainConfig: chainConfig,
