@@ -58,6 +58,11 @@ type StorageHandler interface {
 	// which case an error is returned.
 	GetBlockhashBySlot(uint64) (solana.Hash, error)
 
+	// GetSlotByBlockhash returns the slot number stored for the given block hash.
+	// If no slot exists for that hash, it walks backward by decrementing the slot number
+	// until a slot is found or the genesis slot is reached, in which case an error is returned.
+	GetSlotByBlockhash(solana.Hash) (uint64, error)
+
 	// StoreLatestBlockPoint is invoked by the tracker after every successfully processed block.
 	StoreLatestBlockPoint(StorageTransaction, BlockPoint) error
 
@@ -72,7 +77,7 @@ type StorageHandler interface {
 	// the event, the public key (address) of the Solana program that emitted the event, the event
 	// name as registered in the [ProgramEventSpecs] config, and the deserialized event itself. If
 	// the method returns an error, the tracker will terminate immediately.
-	StoreEvent(StorageTransaction, uint64, solana.Signature, solana.PublicKey, string, any) error
+	StoreEvent(StorageTransaction, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
 
 	// UseTransactions is invoked exactly once by the tracker during startup, that is, when the
 	// [Start] method is called. This method should return true if the storage backend supports
@@ -110,12 +115,13 @@ var _ StorageHandler = &BoltStorageHandler{}
 
 // EventRecord represents a stored event with metadata
 type EventRecord struct {
-	ID          uint64                 `json:"id"`
-	Slot        uint64                 `json:"slot"`
-	TxSignature string                 `json:"tx_signature"`
-	Program     string                 `json:"program"`
-	EventType   string                 `json:"event_type"`
-	Data        map[string]interface{} `json:"data"`
+	ID              uint64                 `json:"id"`
+	Slot            uint64                 `json:"slot"`
+	TxSignature     string                 `json:"tx_signature"`
+	Program         string                 `json:"program"`
+	EventType       string                 `json:"event_type"`
+	InnerActionHash [32]byte               `json:"inner_action_hash"`
+	Data            map[string]interface{} `json:"data"`
 }
 
 type BlockPoint struct {
@@ -294,6 +300,7 @@ func (b *BoltStorageHandler) StoreEvent(
 	txSignature solana.Signature,
 	programID solana.PublicKey,
 	eventName string,
+	innerActionHash [32]byte,
 	eventData any) error {
 	storeFn := func(tx *bolt.Tx) error {
 		// Generate unique event ID
@@ -397,6 +404,35 @@ func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error
 		}
 
 		return fmt.Errorf("no block hash found at or after slot %d (head is %d)", slot, head)
+	})
+
+	return found, err
+}
+
+func (b *BoltStorageHandler) GetSlotByBlockhash(hash solana.Hash) (uint64, error) {
+	var found uint64
+
+	err := b.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(blocksBucket)
+		if bucket == nil {
+			return fmt.Errorf("cannot find blocks bucket")
+		}
+
+		cursor := bucket.Cursor()
+
+		for k, v := cursor.Last(); k != nil; k, v = cursor.Prev() {
+			var h solana.Hash
+
+			copy(h[:], v)
+
+			if h == hash {
+				found = decodeUint64(k)
+
+				return nil
+			}
+		}
+
+		return fmt.Errorf("no slot found for block hash %s", hash)
 	})
 
 	return found, err

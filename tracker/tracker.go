@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -44,6 +45,9 @@ type EventNotification struct {
 
 	// TxSignature is the signature of the transaction that generated the event.
 	TxSignature solana.Signature
+
+	// InnerActionHash is the hash of the inner action of the transaction.
+	InnerActionHash [32]byte
 
 	// Program is the public key (address) of the Solana program that emitted the tracked event.
 	Program solana.PublicKey
@@ -612,6 +616,16 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 			txSignature = transaction.Signatures[0]
 		}
 
+		bin, err := transaction.Message.MarshalBinary()
+		if err != nil {
+			t.notify(ErrorNotification{
+				fmt.Errorf("failed to marshal transaction: %w", err), false})
+
+			t.logger.Warn("Failed to marshal transaction: %s", err.Error())
+		}
+
+		innerActionHash := sha256.Sum256(bin)
+
 		for _, instruction := range transaction.Message.Instructions {
 			if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
 				t.logger.Warn("Invalid ProgramIDIndex %d in transaction %d (only %d accounts)",
@@ -674,11 +688,12 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 					// Found a matching event!
 					if t.applyTx {
 						pendingNotifications = append(pendingNotifications, EventNotification{
-							SlotNumber:  slot,
-							TxSignature: txSignature,
-							Program:     programID,
-							EventName:   name,
-							EventData:   parsed,
+							SlotNumber:      slot,
+							TxSignature:     txSignature,
+							InnerActionHash: innerActionHash,
+							Program:         programID,
+							EventName:       name,
+							EventData:       parsed,
 						})
 
 						eventFns = append(eventFns, func(st store.StorageTransaction) error {
@@ -688,11 +703,12 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 								txSignature,
 								programID,
 								name,
+								innerActionHash,
 								parsed,
 							)
 						})
 					} else {
-						if err := t.storage.StoreEvent(nil, slot, txSignature, programID, name, parsed); err != nil {
+						if err := t.storage.StoreEvent(nil, slot, txSignature, programID, name, innerActionHash, parsed); err != nil {
 							t.notify(ErrorNotification{
 								fmt.Errorf("failed to store event: %w", err), true})
 
@@ -704,11 +720,12 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 						}
 
 						t.notify(EventNotification{
-							SlotNumber:  slot,
-							TxSignature: txSignature,
-							Program:     programID,
-							EventName:   name,
-							EventData:   parsed,
+							SlotNumber:      slot,
+							TxSignature:     txSignature,
+							InnerActionHash: innerActionHash,
+							Program:         programID,
+							EventName:       name,
+							EventData:       parsed,
 						})
 
 						t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d", name, programID, slot))

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/common"
+	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
+	binary "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/stretchr/testify/mock"
@@ -2298,4 +2300,83 @@ func (m *MockTxSubmiter) WaitForSignature(ctx context.Context, sig solana.Signat
 	args := m.Called(ctx, sig, commitment, maxWaitTime)
 
 	return args.Error(0)
+}
+
+func TestMarshalTransaction(t *testing.T) {
+	txProvider, err := wallet.NewProvider(rpc.LocalNet_RPC)
+	require.NoError(t, err)
+
+	chainConfig := &ChainConfig{
+		TreasuryAddress:    solana.MustPublicKeyFromBase58("AXXWYCH6PNm6AGjaasPG1maarfQvRedSw18wj91Nem1F"),
+		BridgingFeeAddress: solana.MustPublicKeyFromBase58("7d5xBAeX92qPugMB5vixR1cy3wpRCxKE7ckShZaJbPPL"),
+	}
+
+	txSender := NewTxSender(txProvider, chainConfig)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	recentBlockHash := solana.Hash{123}
+
+	txDto := BridgeTransactionDto{
+		SenderAddr: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
+		Receivers: []BridgingTxReceiver{
+			{
+				Address: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
+				TokenAmount: wallet.TokenAmount{
+					Amount:    new(big.Int).SetUint64(1000),
+					TokenMint: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
+				},
+			},
+		},
+		BatchID: 1,
+	}
+
+	tx, err := txSender.CreateTx(
+		ctx,
+		solana.MustPublicKeyFromBase58("BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa"),
+		InstructionTypeBridgeTransaction,
+		recentBlockHash,
+		txDto,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, tx)
+
+	rawTx, err := wallet.MarshalTransaction(tx)
+	require.NoError(t, err)
+	require.NotNil(t, rawTx)
+
+	unmarshaledTx, err := wallet.UnmarshalTransaction(rawTx)
+	require.NoError(t, err)
+	require.NotNil(t, unmarshaledTx)
+	require.Equal(t, tx.Message.RecentBlockhash, unmarshaledTx.Message.RecentBlockhash)
+	require.Equal(t, tx.Message.Instructions, unmarshaledTx.Message.Instructions)
+
+	require.Len(t, tx.Message.Instructions, 1)
+
+	instrData := tx.Message.Instructions[0].Data
+	// skip the 8-byte instruction discriminator
+	dec := binary.NewBorshDecoder(instrData[8:])
+
+	var transfers []skyline_program.TransferItem
+	err = dec.Decode(&transfers)
+	require.NoError(t, err)
+
+	var mints []solana.PublicKey
+	err = dec.Decode(&mints)
+	require.NoError(t, err)
+
+	var batchID uint64
+	err = dec.Decode(&batchID)
+	require.NoError(t, err)
+
+	require.Len(t, transfers, 1)
+	require.Equal(t, solana.MustPublicKeyFromBase58("BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa"), transfers[0].Recipient)
+	require.Equal(t, uint8(0), transfers[0].MintIndex)
+	require.Equal(t, uint64(1000), transfers[0].Amount)
+
+	require.Len(t, mints, 1)
+	require.Equal(t, solana.MustPublicKeyFromBase58("BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa"), mints[0])
+
+	require.Equal(t, uint64(1), batchID)
 }
