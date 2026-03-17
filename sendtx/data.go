@@ -28,8 +28,6 @@ type BridgeRequestDto struct {
 }
 
 type BridgeTransactionDto struct {
-	SrcChainID uint8
-	DstChainID uint8
 	SenderAddr string
 	Receivers  []BridgingTxReceiver
 	BatchID    uint64

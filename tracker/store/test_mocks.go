@@ -37,7 +37,8 @@ func (m *MockStorageHandler) StoreBlock(tx StorageTransaction, slot uint64, hash
 }
 
 func (m *MockStorageHandler) StoreEvent(
-	tx StorageTransaction, slot uint64, txSignature solana.Signature, programID solana.PublicKey, eventName string, eventData any) error {
+	tx StorageTransaction, slot uint64, txSignature solana.Signature, programID solana.PublicKey,
+	eventName string, eventData any) error {
 	args := m.Called(tx, slot, txSignature, programID, eventName, eventData)
 
 	return args.Error(0)

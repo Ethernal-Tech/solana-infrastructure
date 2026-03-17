@@ -671,45 +671,45 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 						continue
 					}
 
-				// Found a matching event!
-				if t.applyTx {
-					pendingNotifications = append(pendingNotifications, EventNotification{
-						SlotNumber:  slot,
-						TxSignature: txSignature,
-						Program:     programID,
-						EventName:   name,
-						EventData:   parsed,
-					})
+					// Found a matching event!
+					if t.applyTx {
+						pendingNotifications = append(pendingNotifications, EventNotification{
+							SlotNumber:  slot,
+							TxSignature: txSignature,
+							Program:     programID,
+							EventName:   name,
+							EventData:   parsed,
+						})
 
-					eventFns = append(eventFns, func(st store.StorageTransaction) error {
-						return t.storage.StoreEvent(
-							st,
-							slot,
-							txSignature,
-							programID,
-							name,
-							parsed,
-						)
-					})
-				} else {
-					if err := t.storage.StoreEvent(nil, slot, txSignature, programID, name, parsed); err != nil {
-						t.notify(ErrorNotification{
-							fmt.Errorf("failed to store event: %w", err), true})
+						eventFns = append(eventFns, func(st store.StorageTransaction) error {
+							return t.storage.StoreEvent(
+								st,
+								slot,
+								txSignature,
+								programID,
+								name,
+								parsed,
+							)
+						})
+					} else {
+						if err := t.storage.StoreEvent(nil, slot, txSignature, programID, name, parsed); err != nil {
+							t.notify(ErrorNotification{
+								fmt.Errorf("failed to store event: %w", err), true})
 
-						t.logger.Error("Failed to store event: %s", err.Error())
+							t.logger.Error("Failed to store event: %s", err.Error())
 
-						t.terminate()
+							t.terminate()
 
-						return false
-					}
+							return false
+						}
 
-					t.notify(EventNotification{
-						SlotNumber:  slot,
-						TxSignature: txSignature,
-						Program:     programID,
-						EventName:   name,
-						EventData:   parsed,
-					})
+						t.notify(EventNotification{
+							SlotNumber:  slot,
+							TxSignature: txSignature,
+							Program:     programID,
+							EventName:   name,
+							EventData:   parsed,
+						})
 
 						t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d", name, programID, slot))
 					}
