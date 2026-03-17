@@ -16,22 +16,20 @@ import (
 
 type TxSender struct {
 	txProvider        wallet.ITxProvider
-	minAmountToBridge uint64
-	chainConfig       ChainConfig
+	chainConfig       *ChainConfig
 	instructionConfig *InstructionConfig
 	retryOptions      []infracommon.RetryConfigOption
 }
 
-func NewTxSender(txProvider wallet.ITxProvider,
-	chainConfig ChainConfig, instructionConfig *InstructionConfig,
-) *TxSender {
+func NewTxSender(txProvider wallet.ITxProvider, chainConfig *ChainConfig) *TxSender {
 	txSnd := &TxSender{
-		txProvider:        txProvider,
-		chainConfig:       chainConfig,
-		instructionConfig: instructionConfig,
+		txProvider:  txProvider,
+		chainConfig: chainConfig,
 	}
 
-	txSnd.minAmountToBridge = max(txSnd.minAmountToBridge, chainConfig.MinAmountToBridge)
+	instrCfg, _ := NewInstructionConfig() // without adding options, error will never be returned
+
+	txSnd.instructionConfig = instrCfg
 
 	return txSnd
 }
@@ -76,7 +74,7 @@ func (txSnd *TxSender) SendTx(
 	return &signature, nil
 }
 
-func checkFees(config ChainConfig, bridgingFee, operationFee uint64) error {
+func checkFees(config *ChainConfig, bridgingFee, operationFee uint64) error {
 	if bridgingFee < config.MinFeeForBridging {
 		return fmt.Errorf("bridging fee is less than: %d", config.MinFeeForBridging)
 	}
@@ -165,8 +163,8 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	}
 
 	for _, receiver := range tx.Receivers {
-		if receiver.TokenAmount.Amount.Cmp(new(big.Int).SetUint64(txSnd.minAmountToBridge)) == -1 {
-			return nil, fmt.Errorf("amount to bridge is less than the minimum required: %d", txSnd.minAmountToBridge)
+		if receiver.TokenAmount.Amount.Cmp(new(big.Int).SetUint64(txSnd.chainConfig.MinAmountToBridge)) == -1 {
+			return nil, fmt.Errorf("amount to bridge is less than the minimum required: %d", txSnd.chainConfig.MinAmountToBridge)
 		}
 	}
 
