@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/hashicorp/go-hclog"
 
 	binary "github.com/gagliardetto/binary"
@@ -415,7 +418,7 @@ func (t *EventTracker) Start(ctx context.Context) {
 	t.setState(active)
 
 	go func() {
-		t.logger.Info("Starting indexing from slot %d", currentSlot)
+		t.logger.Info(fmt.Sprintf("Starting indexing from slot %d", currentSlot))
 
 		// Polling loop
 		for {
@@ -432,14 +435,14 @@ func (t *EventTracker) Start(ctx context.Context) {
 			default: // continue with normal execution
 			}
 
-			t.logger.Debug("Checking chain head at slot %d", currentSlot)
+			t.logger.Debug(fmt.Sprintf("Checking chain head at slot %d", currentSlot))
 
 			fetchedSlot, err := t.client.GetSlot(ctx, t.commitment)
 			if err != nil {
 				t.notify(
 					ErrorNotification{fmt.Errorf("failed to fetch slot %d: %w", currentSlot, err), false})
-				t.logger.Error("Failed to fetch slot %d: %s", currentSlot, err.Error())
-				t.logger.Info("I will try again in %d ms...", t.pollTime.Milliseconds())
+				t.logger.Error(fmt.Sprintf("Failed to fetch slot %d: %s", currentSlot, err.Error()))
+				t.logger.Info(fmt.Sprintf("I will try again in %d ms...", t.pollTime.Milliseconds()))
 				time.Sleep(t.pollTime)
 
 				continue
@@ -447,13 +450,13 @@ func (t *EventTracker) Start(ctx context.Context) {
 
 			if currentSlot > fetchedSlot {
 				t.logger.Debug(
-					"Reached chain head, waiting for slot %d to be %s (currently last %s: %d)",
-					currentSlot,
-					t.commitment,
-					t.commitment,
-					fetchedSlot,
-				)
-				t.logger.Info("I will try again in %d ms...", t.pollTime.Milliseconds())
+					fmt.Sprintf("Reached chain head, waiting for slot %d to be %s (currently last %s: %d)",
+						currentSlot,
+						t.commitment,
+						t.commitment,
+						fetchedSlot,
+					))
+				t.logger.Info(fmt.Sprintf("I will try again in %d ms...", t.pollTime.Milliseconds()))
 				time.Sleep(t.pollTime)
 
 				continue
@@ -475,7 +478,7 @@ func (t *EventTracker) Start(ctx context.Context) {
 				default:
 				}
 				// Process current slot - cannot interrupt (pause, terminate) during processing of a slot
-				t.logger.Info("Slot %d is %s, processing...", currentSlot, t.commitment)
+				t.logger.Info(fmt.Sprintf("Slot %d is %s, processing...", currentSlot, t.commitment))
 
 				block, err := t.client.GetBlockWithOpts(ctx, currentSlot, &rpc.GetBlockOpts{
 					TransactionDetails:             rpc.TransactionDetailsFull,
@@ -488,14 +491,46 @@ func (t *EventTracker) Start(ctx context.Context) {
 						if err := t.storage.StoreSlot(nil, currentSlot); err != nil {
 							t.notify(ErrorNotification{
 								fmt.Errorf("failed to store skipped slot: %w", err), true})
-							t.logger.Error("Failed to store skipped slot: %s", err.Error())
+							t.logger.Error(fmt.Sprintf("Failed to store skipped slot: %s", err.Error()))
 							t.terminate()
 
 							return
 						}
 
 						t.notify(SlotNotification{currentSlot, false})
-						t.logger.Info("Slot %d was skipped (no block produced), moving to next slot", currentSlot)
+						t.logger.Info(fmt.Sprintf("Slot %d was skipped (no block produced), moving to next slot", currentSlot))
+
+						currentSlot++
+
+						continue
+					}
+
+					if isBlockNotAvailableForSlotError(err, currentSlot) {
+						if err := t.storage.StoreSlot(nil, currentSlot); err != nil {
+							t.notify(ErrorNotification{
+								fmt.Errorf("failed to store slot with no available block: %w", err), true})
+							t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
+							t.terminate()
+
+							return
+						}
+
+						t.notify(SlotNotification{currentSlot, false})
+						t.logger.Info(fmt.Sprintf("Slot %d block not available from RPC, moving to next slot", currentSlot))
+
+						currentSlot++
+
+						continue
+					}
+
+					if isCleanedUpBlockError(err, currentSlot) {
+						t.notify(ErrorNotification{
+							fmt.Errorf("slot %d was cleaned up, does not exist in node", currentSlot), false})
+						t.logger.Error(fmt.Sprintf("Slot %d was cleaned up, does not exist in node", currentSlot))
+						t.terminate()
+
+						t.notify(SlotNotification{currentSlot, false})
+						t.logger.Info(fmt.Sprintf("Slot %d was skipped (no block produced), moving to next slot", currentSlot))
 
 						currentSlot++
 
@@ -505,8 +540,8 @@ func (t *EventTracker) Start(ctx context.Context) {
 					// Retry for other errors - break inner loop to re-fetch chain head
 					t.notify(ErrorNotification{
 						fmt.Errorf("failed to fetch block for slot %d: %w", currentSlot, err), false})
-					t.logger.Error("Failed to fetch block for slot %d: %s", currentSlot, err.Error())
-					t.logger.Info("I will try again in %d ms...", t.pollTime.Milliseconds())
+					t.logger.Error(fmt.Sprintf("Failed to fetch block for slot %d: %s", currentSlot, err.Error()))
+					t.logger.Info(fmt.Sprintf("I will try again in %d ms...", t.pollTime.Milliseconds()))
 					time.Sleep(t.pollTime)
 
 					break // Break inner loop, outer loop will retry
@@ -516,26 +551,26 @@ func (t *EventTracker) Start(ctx context.Context) {
 					if err := t.storage.StoreSlot(nil, currentSlot); err != nil {
 						t.notify(ErrorNotification{
 							fmt.Errorf("failed to store slot: %w", err), true})
-						t.logger.Error("Failed to store slot: %s", err.Error())
+						t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
 						t.terminate()
 
 						return
 					}
 
 					t.notify(SlotNotification{currentSlot, false})
-					t.logger.Debug("Slot %d is empty", currentSlot)
+					t.logger.Debug(fmt.Sprintf("Slot %d is empty", currentSlot))
 
 					currentSlot++
 
 					continue
 				}
 
-				t.logger.Info("Block in slot %d has %d transactions", currentSlot, len(block.Transactions))
+				t.logger.Info(fmt.Sprintf("Block in slot %d has %d transactions", currentSlot, len(block.Transactions)))
 
 				if err := t.storage.StoreBlock(nil, currentSlot, block.Blockhash); err != nil {
 					t.notify(ErrorNotification{
 						fmt.Errorf("failed to store block: %w", err), true})
-					t.logger.Error("Failed to store block: %s", err.Error())
+					t.logger.Error(fmt.Sprintf("Failed to store block: %s", err.Error()))
 					t.terminate()
 
 					return
@@ -550,7 +585,7 @@ func (t *EventTracker) Start(ctx context.Context) {
 					t.notify(ErrorNotification{
 						fmt.Errorf("failed to store block point: %w", err), true,
 					})
-					t.logger.Error("Failed to store block point: %s", err.Error())
+					t.logger.Error(fmt.Sprintf("Failed to store block point: %s", err.Error()))
 					t.terminate()
 
 					return
@@ -571,7 +606,7 @@ func (t *EventTracker) Start(ctx context.Context) {
 
 			if currentSlot > fetchedSlot {
 				// Sleep when caught up to chain head
-				t.logger.Debug("Processed up to slot %d, waiting for new blocks...", currentSlot-1)
+				t.logger.Debug(fmt.Sprintf("Processed up to slot %d, waiting for new blocks...", currentSlot-1))
 				time.Sleep(t.pollTime)
 			}
 		}
@@ -593,7 +628,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 			t.notify(ErrorNotification{
 				fmt.Errorf("failed to decode transaction %d: %w", txIndex+1, err), false})
 
-			t.logger.Warn("Failed to decode transaction %d: %w", txIndex+1, err.Error())
+			t.logger.Warn(fmt.Sprintf("Failed to decode transaction %d: %s", txIndex+1, err.Error()))
 
 			continue
 		}
@@ -621,15 +656,15 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 			t.notify(ErrorNotification{
 				fmt.Errorf("failed to marshal transaction: %w", err), false})
 
-			t.logger.Warn("Failed to marshal transaction: %s", err.Error())
+			t.logger.Warn(fmt.Sprintf("Failed to marshal transaction: %s", err.Error()))
 		}
 
 		innerActionHash := sha256.Sum256(bin)
 
 		for _, instruction := range transaction.Message.Instructions {
 			if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
-				t.logger.Warn("Invalid ProgramIDIndex %d in transaction %d (only %d accounts)",
-					instruction.ProgramIDIndex, txIndex+1, len(transaction.Message.AccountKeys))
+				t.logger.Warn(fmt.Sprintf("Invalid ProgramIDIndex %d in transaction %d (only %d accounts)",
+					instruction.ProgramIDIndex, txIndex+1, len(transaction.Message.AccountKeys)))
 
 				continue
 			}
@@ -664,7 +699,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 					t.notify(ErrorNotification{
 						fmt.Errorf("failed to decode log: %w", err), false})
 
-					t.logger.Warn("Failed to decode log: %s", err.Error())
+					t.logger.Warn(fmt.Sprintf("Failed to decode log: %s", err.Error()))
 
 					continue
 				}
@@ -676,7 +711,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 						t.notify(ErrorNotification{
 							fmt.Errorf("failed to parse event: %w", err), false})
 
-						t.logger.Warn("Failed to parse event: %s", err.Error())
+						t.logger.Warn(fmt.Sprintf("Failed to parse event: %s", err.Error()))
 
 						continue
 					}
@@ -712,7 +747,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 							t.notify(ErrorNotification{
 								fmt.Errorf("failed to store event: %w", err), true})
 
-							t.logger.Error("Failed to store event: %s", err.Error())
+							t.logger.Error(fmt.Sprintf("Failed to store event: %s", err.Error()))
 
 							t.terminate()
 
@@ -738,7 +773,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 							t.notify(ErrorNotification{
 								fmt.Errorf("failed to write in event sink: %w", err), false})
 
-							t.logger.Warn("Failed to write in event sink: %s", err.Error())
+							t.logger.Warn(fmt.Sprintf("Failed to write in event sink: %s", err.Error()))
 						}
 					}
 
@@ -760,7 +795,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 			t.notify(ErrorNotification{
 				fmt.Errorf("failed to apply storage transaction: %w", err), true})
 
-			t.logger.Error("Failed to apply storage transaction: %s", err.Error())
+			t.logger.Error(fmt.Sprintf("Failed to apply storage transaction: %s", err.Error()))
 
 			t.terminate()
 
@@ -774,7 +809,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 				notification.EventName, notification.Program, notification.SlotNumber))
 		}
 
-		t.logger.Debug("Successfully stored %d events for slot %d", len(eventFns), slot)
+		t.logger.Debug(fmt.Sprintf("Successfully stored %d events for slot %d", len(eventFns), slot))
 
 		return true
 	}
@@ -783,7 +818,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 		t.notify(ErrorNotification{
 			fmt.Errorf("failed to store slot: %w", err), true})
 
-		t.logger.Error("Failed to store slot: %s", err.Error())
+		t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
 
 		t.terminate()
 
@@ -803,7 +838,7 @@ func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) 
 
 	trackedEvents, ok := t.trackedPrograms[programID] // checked existence of programID in processBlock
 	if !ok {
-		t.logger.Warn("Program %s not found in tracked programs", programID)
+		t.logger.Warn(fmt.Sprintf("Program %s not found in tracked programs", programID))
 
 		return nil, "", nil
 	}
@@ -844,6 +879,48 @@ func isSkippedSlotError(err error) bool {
 	return strings.Contains(errStr, "-32007") ||
 		strings.Contains(errStr, "was skipped") ||
 		strings.Contains(errStr, "missing due to ledger jump")
+}
+
+// isBlockNotAvailableForSlotError detects RPC -32004 (and matching message) when getBlock has
+// nothing to return for this slot. Without handling it, the tracker would retry the same slot
+// forever because err.Error() is a spew dump and does not match isSkippedSlotError.
+func isBlockNotAvailableForSlotError(err error, slot uint64) bool {
+	want := fmt.Sprintf("Block not available for slot %d", slot)
+
+	var rpcErr *jsonrpc.RPCError
+	if errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Message != "" {
+		return rpcErr.Code == -32004 && strings.Contains(rpcErr.Message, want)
+	}
+
+	// RPCError.Error() is a spew dump; require code in the dump when Message path did not apply.
+	errStr := err.Error()
+	return strings.Contains(errStr, want) && strings.Contains(errStr, "-32004")
+}
+
+func isCleanedUpBlockError(err error, slot uint64) bool {
+	msg := err.Error()
+	var rpcErr *jsonrpc.RPCError
+	if errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Message != "" {
+		msg = rpcErr.Message
+	}
+
+	prefix := fmt.Sprintf("Block %d cleaned up, does not exist on node.", slot)
+	if !strings.Contains(msg, prefix) {
+		return false
+	}
+
+	const marker = "First available block: "
+	idx := strings.LastIndex(msg, marker)
+	if idx < 0 {
+		return false
+	}
+
+	firstAvailableBlock, parseErr := strconv.ParseUint(strings.TrimSpace(msg[idx+len(marker):]), 10, 64)
+	if parseErr != nil {
+		return false
+	}
+
+	return firstAvailableBlock > slot
 }
 
 // setupClient initialises config.Client if it is not already set.
