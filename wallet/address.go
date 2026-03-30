@@ -50,6 +50,19 @@ func PublicKeyFromAddress(address string) (solana.PublicKey, error) {
 	return pubKey, nil
 }
 
+func PublicKeyFromBytes(in []byte) (out solana.PublicKey, err error) {
+	byteCount := len(in)
+
+	if byteCount != solana.PublicKeyLength {
+		return solana.PublicKey{},
+			fmt.Errorf("invalid public key size, expected %v, got %d", solana.PublicKeyLength, byteCount)
+	}
+
+	copy(out[:], in)
+
+	return
+}
+
 func FindAssociatedTokenAddress(walletAddress, tokenMint solana.PublicKey) (solana.PublicKey, uint8, error) {
 	associatedTokenAddress, bumpSeed, err := solana.FindAssociatedTokenAddress(walletAddress, tokenMint)
 	if err != nil {
