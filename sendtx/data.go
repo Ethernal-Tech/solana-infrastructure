@@ -1,9 +1,14 @@
 package sendtx
 
 import (
+	"bytes"
+
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
+	bin "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
 )
+
+var Ed25519ProgramID = solana.MustPublicKeyFromBase58("Ed25519SigVerify111111111111111111111111111")
 
 type ChainConfig struct {
 	MinAmountToBridge     uint64
@@ -12,6 +17,29 @@ type ChainConfig struct {
 	TreasuryAddress       solana.PublicKey
 	BridgingFeeAddress    solana.PublicKey
 	CurrencyTokenID       uint16
+}
+
+type SolanaPayload struct {
+	Blockhash string               `json:"blockhash"`
+	Receivers []BridgingTxReceiver `json:"receivers"`
+	BatchID   uint64               `json:"batch_id"`
+}
+
+func (payload SolanaPayload) Marshal() ([]byte, error) {
+	var buf bytes.Buffer
+
+	enc := bin.NewBinEncoder(&buf)
+	if err := enc.Encode(payload); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func (payload *SolanaPayload) Unmarshal(raw []byte) error {
+	dec := bin.NewBinDecoder(raw)
+
+	return dec.Decode(payload)
 }
 
 type BridgingTxReceiver struct {
@@ -28,9 +56,11 @@ type BridgeRequestDto struct {
 }
 
 type BridgeTransactionDto struct {
-	SenderAddr string
-	Receivers  []BridgingTxReceiver
-	BatchID    uint64
+	SenderAddr     string
+	Receivers      []BridgingTxReceiver
+	BatchID        uint64
+	PayloadBytes   []byte
+	SignaturePairs map[solana.PublicKey]solana.Signature
 }
 
 type BridgeVSUDto struct {

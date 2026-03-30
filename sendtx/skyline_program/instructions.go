@@ -143,6 +143,7 @@ func NewBridgeTransactionInstruction(
 	tokenProgramAccount solanago.PublicKey,
 	systemProgramAccount solanago.PublicKey,
 	associatedTokenProgramAccount solanago.PublicKey,
+	instructionsAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
 	enc__ := binary.NewBorshEncoder(buf__)
@@ -192,6 +193,9 @@ func NewBridgeTransactionInstruction(
 		// Account 5 "associated_token_program": Read-only, Non-signer, Required, Address: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
 		// Associated token program — required for ATA creation CPIs.
 		accounts__.Append(solanago.NewAccountMeta(associatedTokenProgramAccount, false, false))
+		// Account 6 "instructions": Read-only, Non-signer, Required, Address: Sysvar1nstructions1111111111111111111111111
+		// Instructions sysvar used to read and validate the preceding ed25519 ix.
+		accounts__.Append(solanago.NewAccountMeta(instructionsAccount, false, false))
 	}
 
 	// Create the instruction.

@@ -2,6 +2,7 @@ package sendtx
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 
@@ -48,13 +49,18 @@ func (txSnd *TxSender) CreateTx(
 	recentBlockHash solana.Hash,
 	txDto interface{},
 ) (*solana.Transaction, error) {
-	instruction, err := txSnd.buildInstruction(instructionType, txDto)
+	instructions, err := txSnd.buildInstructions(instructionType, txDto)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare bridging request instruction: %w", err)
 	}
 
-	tx, err := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).
-		SetFeePayer(solanaPublicKey).AddInstruction(instruction).Build()
+	builder := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).SetFeePayer(solanaPublicKey)
+
+	for _, instruction := range instructions {
+		builder = builder.AddInstruction(instruction)
+	}
+
+	tx, err := builder.Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
 	}
@@ -86,8 +92,8 @@ func checkFees(config *ChainConfig, bridgingFee, operationFee uint64) error {
 	return nil
 }
 
-func (txSnd *TxSender) buildInstruction(
-	instructionType InstructionType, txDto interface{}) (solana.Instruction, error) {
+func (txSnd *TxSender) buildInstructions(
+	instructionType InstructionType, txDto interface{}) ([]solana.Instruction, error) {
 	switch instructionType {
 	case InstructionTypeBridgingRequest:
 		tx, ok := txDto.(BridgeRequestDto)
@@ -95,7 +101,12 @@ func (txSnd *TxSender) buildInstruction(
 			return nil, fmt.Errorf("expected BridgeRequestDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildBridgingRequestInstruction(tx)
+		bridgingIx, err := txSnd.buildBridgingRequestInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build bridging request instruction: %w", err)
+		}
+
+		return []solana.Instruction{bridgingIx}, nil
 	case InstructionTypeBridgeTransaction:
 		tx, ok := txDto.(BridgeTransactionDto)
 		if !ok {
@@ -109,49 +120,84 @@ func (txSnd *TxSender) buildInstruction(
 			return nil, fmt.Errorf("expected BridgeVSUDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildBridgeVSUInstruction(tx)
+		bridgeVSUIx, err := txSnd.buildBridgeVSUInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build bridge VSU instruction: %w", err)
+		}
+
+		return []solana.Instruction{bridgeVSUIx}, nil
 	case InstructionTypeInitialize:
 		tx, ok := txDto.(InitializeDto)
 		if !ok {
 			return nil, fmt.Errorf("expected InitializeDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildInitializeInstruction(tx)
+		initializeIx, err := txSnd.buildInitializeInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build initialize instruction: %w", err)
+		}
+
+		return []solana.Instruction{initializeIx}, nil
 	case InstructionTypeRegisterTokensLockUnlock:
 		tx, ok := txDto.(RegisterTokenLockUnlockDto)
 		if !ok {
 			return nil, fmt.Errorf("expected RegisterTokenLockUnlockDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildRegisterTokenLockUnlockInstruction(tx)
+		registerTokenLockUnlockIx, err := txSnd.buildRegisterTokenLockUnlockInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build register token lock unlock instruction: %w", err)
+		}
+
+		return []solana.Instruction{registerTokenLockUnlockIx}, nil
 	case InstructionTypeUpdateFeeConfig:
 		tx, ok := txDto.(UpdateFeeConfigDto)
 		if !ok {
 			return nil, fmt.Errorf("expected UpdateFeeConfigDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildUpdateFeeConfigInstruction(tx)
+		updateFeeConfigIx, err := txSnd.buildUpdateFeeConfigInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build update fee config instruction: %w", err)
+		}
+
+		return []solana.Instruction{updateFeeConfigIx}, nil
 	case InstructionTypeSOLTransfer:
 		tx, ok := txDto.(SOLTransferDto)
 		if !ok {
 			return nil, fmt.Errorf("expected TransferDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildTransferInstruction(tx)
+		transferIx, err := txSnd.buildTransferInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build transfer instruction: %w", err)
+		}
+
+		return []solana.Instruction{transferIx}, nil
 	case InstructionTypeSPLTransfer:
 		tx, ok := txDto.(SPLTransferDto)
 		if !ok {
 			return nil, fmt.Errorf("expected SPLTransferDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildSPLTransferInstruction(tx)
+		splTransferIx, err := txSnd.buildSPLTransferInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build SPL transfer instruction: %w", err)
+		}
+
+		return []solana.Instruction{splTransferIx}, nil
 	case InstructionCreateInstruction:
 		tx, ok := txDto.(CreateInstructionDto)
 		if !ok {
 			return nil, fmt.Errorf("expected CreateInstructionDto for type %s, got %T", instructionType, txDto)
 		}
 
-		return txSnd.buildCreateInstruction(tx)
+		createIx, err := txSnd.buildCreateInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build create instruction: %w", err)
+		}
+
+		return []solana.Instruction{createIx}, nil
 	default:
 		return nil, fmt.Errorf("unsupported transaction type: %s", instructionType)
 	}
@@ -242,7 +288,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	)
 }
 
-func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto) (solana.Instruction, error) {
+func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto) ([]solana.Instruction, error) {
 	if err := wallet.ValidateAddress(tx.SenderAddr, false); err != nil {
 		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.SenderAddr, err)
 	}
@@ -292,7 +338,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
-	return skyline_program.NewBridgeTransactionInstruction(
+	bridgeTxIx, err := skyline_program.NewBridgeTransactionInstruction(
 		transferItems,
 		mints,
 		tx.BatchID,
@@ -302,7 +348,177 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
+		solana.SysVarInstructionsPubkey,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build bridge transaction instruction: %w", err)
+	}
+
+	remainingAccounts, err := txSnd.bridgeTransactionRemainingAccounts(mints, transferItems)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build bridge transaction remaining accounts: %w", err)
+	}
+
+	data, err := bridgeTxIx.Data()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get instruction data: %w", err)
+	}
+
+	bridgeTxIxFinal := solana.NewInstruction(
+		bridgeTxIx.ProgramID(), append(bridgeTxIx.Accounts(), remainingAccounts...), data)
+
+	batchedEd25519Ix, err := txSnd.buildBatchedEd25519Instruction(tx.SignaturePairs, tx.PayloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build batched ed25519 instruction: %w", err)
+	}
+
+	return []solana.Instruction{batchedEd25519Ix, bridgeTxIxFinal}, nil
+}
+
+func (txSnd *TxSender) bridgeTransactionRemainingAccounts(
+	mints []solana.PublicKey,
+	transfers []skyline_program.TransferItem,
+) ([]*solana.AccountMeta, error) {
+	nMint, nXfer := len(mints), len(transfers)
+	out := make([]*solana.AccountMeta, 0, nMint*3+nXfer*2)
+
+	for _, m := range mints {
+		out = append(out, solana.NewAccountMeta(m, false, false))
+	}
+
+	for _, tr := range transfers {
+		out = append(out, solana.NewAccountMeta(tr.Recipient, false, false))
+	}
+
+	for _, m := range mints {
+		reg, _, err := solana.FindProgramAddress([][]byte{skyline_program.TOKEN_REGISTRY_SEED, m[:]},
+			skyline_program.ProgramID)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, solana.NewAccountMeta(reg, false, false))
+	}
+
+	for _, tr := range transfers {
+		mintPk := mints[tr.MintIndex]
+
+		ata, _, err := solana.FindAssociatedTokenAddress(tr.Recipient, mintPk)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, solana.NewAccountMeta(ata, true, false))
+	}
+
+	for _, m := range mints {
+		vaultAta, _, err := solana.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, m)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, solana.NewAccountMeta(vaultAta, true, false))
+	}
+
+	return out, nil
+}
+
+// buildBatchedEd25519Instruction constructs a Solana Ed25519 program instruction for batch signature verification.
+// This function enables efficient batch verification of multiple Ed25519 signatures against a shared "batchID" message.
+// Here's how it works step by step:
+//  1. It first ensures there is at least one signature pair provided.
+//     Each pair consists of a public key and its corresponding signature.
+//  2. The batchID is converted into a little-endian byte representation to be used as the common signed message.
+//  3. The serialized instruction data is prepared, sized for the header,
+//     per-signature offsets, all pubkeys/signatures, and the shared message.
+//  4. For each (pubkey, signature) pair, it encodes an offset struct which specifies where the signature,
+//     public key, and message appear in the instruction data (per the ed25519 program spec),
+//     referencing the "current instruction" as the data source in the transaction.
+//  5. The payload for each signer—32-byte public key followed by 64-byte signature—is appended in sequence.
+//  6. The shared message bytes are appended only once at the end of the payload.
+//     Each offset struct points to the same message region.
+//  7. Finally, the function packages everything into a Solana instruction using the Ed25519 verification program,
+//     with no account metas (pure verification).
+//
+// This design allows Solana to verify all provided signatures at once in a single instruction,
+// referencing a common message, and is crucial for ensuring atomic and efficient batch validation
+// for bridging operations (such as verifying that a group of validators have signed a batch with a known batch ID).
+//
+// Example layout of resulting data (for 2 signatures, batchID is 8 bytes):
+//
+//	[header | offsets | pubkey1 | sig1 | pubkey2 | sig2 | message]
+//
+// Where:
+//   - header:         [num_signatures (1 byte), padding (1 byte)]
+//   - offsets:        14 bytes per signature, describes where each pubkey, sig, and message start in the data
+//   - pubkeyN:        32 bytes per public key
+//   - sigN:           64 bytes per signature
+//   - message:        (typically 8 bytes, i.e., batchID in little endian)
+//
+// Example hex layout for 2 signatures (pubkey1/pk2, sig1/sig2, message):
+// [01 00][offsets1...14B][offsets2...14B][pubkey1...32B][sig1...64B][pubkey2...32B][sig2...64B][message...8B]
+// That is: [header][offset structs...][payload: pk1][sig1][pk2][sig2][message]
+func (txSnd *TxSender) buildBatchedEd25519Instruction(
+	signaturePairs map[solana.PublicKey]solana.Signature,
+	payloadBytes []byte,
+) (solana.Instruction, error) {
+	numSigs := len(signaturePairs)
+	if numSigs == 0 {
+		return nil, fmt.Errorf("no signature pairs provided")
+	}
+
+	if len(payloadBytes) == 0 {
+		return nil, fmt.Errorf("payload bytes is empty")
+	}
+
+	const (
+		PubKeyLength            = 32
+		SigLength               = 64
+		CurrentInstructionIndex = 0xFFFF
+
+		Ed25519ProgramOffsetsSize = 14 // 7 * u16
+		Ed25519ProgramHeaderSize  = 2  // num signatures + padding
+	)
+
+	data := make([]byte, 0,
+		Ed25519ProgramHeaderSize+numSigs*Ed25519ProgramOffsetsSize+numSigs*(PubKeyLength+SigLength)+len(payloadBytes))
+	data = append(data, byte(numSigs), 0)
+
+	baseOffset := Ed25519ProgramHeaderSize + numSigs*Ed25519ProgramOffsetsSize
+	pubkeySigSectionSize := numSigs * (PubKeyLength + SigLength)
+	sharedMsgOffset := baseOffset + pubkeySigSectionSize
+	payloadOffset := baseOffset
+	payload := make([]byte, 0, pubkeySigSectionSize+len(payloadBytes))
+
+	for pubkey, signature := range signaturePairs {
+		publicKeyOffset := payloadOffset
+		signatureOffset := publicKeyOffset + PubKeyLength
+		offsets := make([]byte, Ed25519ProgramOffsetsSize)
+		binary.LittleEndian.PutUint16(offsets[0:], uint16(signatureOffset)) //nolint:gosec // signature offset
+		// Reference "current instruction" to support any transaction position.
+		binary.LittleEndian.PutUint16(offsets[2:], CurrentInstructionIndex)    // padding
+		binary.LittleEndian.PutUint16(offsets[4:], uint16(publicKeyOffset))    //nolint:gosec // public key offset
+		binary.LittleEndian.PutUint16(offsets[6:], CurrentInstructionIndex)    // padding
+		binary.LittleEndian.PutUint16(offsets[8:], uint16(sharedMsgOffset))    //nolint:gosec // shared message offset
+		binary.LittleEndian.PutUint16(offsets[10:], uint16(len(payloadBytes))) //nolint:gosec // message length
+		binary.LittleEndian.PutUint16(offsets[12:], CurrentInstructionIndex)   // padding
+		data = append(data, offsets...)
+
+		payload = append(payload, pubkey[:]...)
+		payload = append(payload, signature[:]...)
+
+		payloadOffset += PubKeyLength + SigLength
+	}
+
+	// Append the message only once; every signer entry points to this shared region.
+	payload = append(payload, payloadBytes...)
+	data = append(data, payload...)
+
+	return solana.NewInstruction(
+		Ed25519ProgramID,
+		solana.AccountMetaSlice{},
+		data,
+	), nil
 }
 
 func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instruction, error) {

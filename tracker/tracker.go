@@ -894,12 +894,15 @@ func isBlockNotAvailableForSlotError(err error, slot uint64) bool {
 
 	// RPCError.Error() is a spew dump; require code in the dump when Message path did not apply.
 	errStr := err.Error()
+
 	return strings.Contains(errStr, want) && strings.Contains(errStr, "-32004")
 }
 
 func isCleanedUpBlockError(err error, slot uint64) bool {
 	msg := err.Error()
+
 	var rpcErr *jsonrpc.RPCError
+
 	if errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Message != "" {
 		msg = rpcErr.Message
 	}
@@ -910,6 +913,7 @@ func isCleanedUpBlockError(err error, slot uint64) bool {
 	}
 
 	const marker = "First available block: "
+
 	idx := strings.LastIndex(msg, marker)
 	if idx < 0 {
 		return false
