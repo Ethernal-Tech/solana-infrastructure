@@ -99,7 +99,7 @@ func TestBridgingRequest(t *testing.T) {
 			},
 		}
 
-		expectedSig = solana.Signature{1, 2, 3}
+		expectedSig = mustSignedSignature(t, []byte("bridging-request-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -559,7 +559,7 @@ func TestBridgingTransaction(t *testing.T) {
 			},
 		}
 
-		expectedSig = solana.Signature{4, 5, 6}
+		expectedSig = mustSignedSignature(t, []byte("bridge-transaction-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -732,7 +732,7 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:              42,
 		}
 
-		expectedSig = solana.Signature{4, 5, 6}
+		expectedSig = mustSignedSignature(t, []byte("bridge-vsu-add-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -780,7 +780,7 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:                43,
 		}
 
-		expectedSig = solana.Signature{4, 5, 6}
+		expectedSig = mustSignedSignature(t, []byte("bridge-vsu-remove-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -829,7 +829,7 @@ func TestBridgeVSU(t *testing.T) {
 			BatchID:                44,
 		}
 
-		expectedSig = solana.Signature{7, 8, 9}
+		expectedSig = mustSignedSignature(t, []byte("bridge-vsu-add-remove-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -993,7 +993,7 @@ func TestBridgeVSU(t *testing.T) {
 	t.Run("empty both adding and removing", func(t *testing.T) {
 		mockProvider := new(MockTxSubmiter)
 
-		expectedSig = solana.Signature{10, 11, 12}
+		expectedSig = mustSignedSignature(t, []byte("bridge-vsu-provider-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1063,7 +1063,7 @@ func TestInitialize(t *testing.T) {
 			LastID:        0,
 		}
 
-		expectedSig = solana.Signature{1, 2, 3}
+		expectedSig = mustSignedSignature(t, []byte("initialize-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1112,7 +1112,7 @@ func TestInitialize(t *testing.T) {
 			LastID:        42,
 		}
 
-		expectedSig = solana.Signature{4, 5, 6}
+		expectedSig = mustSignedSignature(t, []byte("initialize-provider-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1155,7 +1155,7 @@ func TestInitialize(t *testing.T) {
 			LastID:        0,
 		}
 
-		expectedSig = solana.Signature{7, 8, 9}
+		expectedSig = mustSignedSignature(t, []byte("initialize-second-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1298,7 +1298,7 @@ func TestInitialize(t *testing.T) {
 			LastID:        0,
 		}
 
-		expectedSig = solana.Signature{13, 14, 15}
+		expectedSig = mustSignedSignature(t, []byte("initialize-third-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1360,7 +1360,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 			MinBridgingAmount: 1_000,
 		}
 
-		expectedSig = solana.Signature{1, 2, 3}
+		expectedSig = mustSignedSignature(t, []byte("register-token-lock-unlock-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1555,7 +1555,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 			NewRelayerAddress:  newRelayer,
 		}
 
-		expectedSig = solana.Signature{4, 5, 6}
+		expectedSig = mustSignedSignature(t, []byte("update-fee-config-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1747,7 +1747,7 @@ func TestSOLTransfer(t *testing.T) {
 			Amount:            1_000,
 		}
 
-		expectedSig = solana.Signature{1, 2, 3}
+		expectedSig = mustSignedSignature(t, []byte("sol-transfer-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -1911,7 +1911,7 @@ func TestSPLTransfer(t *testing.T) {
 			TokenDecimals:     9,
 		}
 
-		expectedSig = solana.Signature{1, 2, 3}
+		expectedSig = mustSignedSignature(t, []byte("spl-transfer-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -2121,7 +2121,7 @@ func TestCreateInstruction(t *testing.T) {
 			ReceiverPublicKey: receiverWallet.PublicKey.String(),
 		}
 
-		expectedSig = solana.Signature{1, 2, 3}
+		expectedSig = mustSignedSignature(t, []byte("create-instruction-success"))
 
 		mockProvider.On("SendTransaction",
 			mock.Anything,
@@ -2309,6 +2309,18 @@ func (m *MockTxSubmiter) WaitForSignature(ctx context.Context, sig solana.Signat
 	args := m.Called(ctx, sig, commitment, maxWaitTime)
 
 	return args.Error(0)
+}
+
+func mustSignedSignature(t *testing.T, payload []byte) solana.Signature {
+	t.Helper()
+
+	testWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	signature, err := testWallet.Sign(payload)
+	require.NoError(t, err)
+
+	return *signature
 }
 
 func TestMarshalTransaction(t *testing.T) {
