@@ -536,9 +536,18 @@ func TestBridgingTransaction(t *testing.T) {
 		receiverPubKey := solana.NewWallet().PublicKey()
 		tokenMint := solana.NewWallet().PublicKey().String()
 
+		bridgeSignerPubKey := solana.NewWallet().PublicKey()
+		payloadBytes := []byte{1, 2, 3, 4}
+
+		signaturePairs := map[solana.PublicKey]solana.Signature{
+			bridgeSignerPubKey: {1, 2, 3},
+		}
+
 		txDto := BridgeTransactionDto{
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			BatchID:    42,
+			SenderAddr:     senderPrivateKey.PublicKey().String(),
+			BatchID:        42,
+			PayloadBytes:   payloadBytes,
+			SignaturePairs: signaturePairs,
 			Receivers: []BridgingTxReceiver{
 				{
 					Address: receiverPubKey.String(),
@@ -2317,6 +2326,10 @@ func TestMarshalTransaction(t *testing.T) {
 	defer cancel()
 
 	recentBlockHash := solana.Hash{123}
+	payloadBytes := []byte{1, 2, 3, 4}
+	signaturePairs := map[solana.PublicKey]solana.Signature{
+		solana.MustPublicKeyFromBase58("BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa"): {1, 2, 3},
+	}
 
 	txDto := BridgeTransactionDto{
 		SenderAddr: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
@@ -2329,7 +2342,9 @@ func TestMarshalTransaction(t *testing.T) {
 				},
 			},
 		},
-		BatchID: 1,
+		BatchID:        1,
+		PayloadBytes:   payloadBytes,
+		SignaturePairs: signaturePairs,
 	}
 
 	tx, err := txSender.CreateTx(
@@ -2352,9 +2367,9 @@ func TestMarshalTransaction(t *testing.T) {
 	require.Equal(t, tx.Message.RecentBlockhash, unmarshaledTx.Message.RecentBlockhash)
 	require.Equal(t, tx.Message.Instructions, unmarshaledTx.Message.Instructions)
 
-	require.Len(t, tx.Message.Instructions, 1)
+	require.Len(t, tx.Message.Instructions, 2)
 
-	instrData := tx.Message.Instructions[0].Data
+	instrData := tx.Message.Instructions[1].Data
 	// skip the 8-byte instruction discriminator
 	dec := binary.NewBorshDecoder(instrData[8:])
 
