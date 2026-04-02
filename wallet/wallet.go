@@ -62,3 +62,12 @@ func (w *Wallet) GetKeys() (solana.PrivateKey, solana.PublicKey) {
 func (w *Wallet) ValidatePrivateKey() error {
 	return w.PrivateKey.Validate()
 }
+
+func IsSolanaAddress(address string) bool {
+	_, err := PublicKeyFromAddress(address)
+	if err != nil {
+		return false
+	}
+
+	return true
+}

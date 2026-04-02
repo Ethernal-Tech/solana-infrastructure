@@ -18,6 +18,7 @@ type ITxProvider interface {
 
 type IUserDataRetriever interface {
 	GetBalance(ctx context.Context, pubKey solana.PublicKey) (uint64, error)
+	GetTokenAccountBalance(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetTokenAccountBalanceResult, error)
 	GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error)
 }
 
@@ -62,6 +63,17 @@ func (p *Provider) GetBalance(ctx context.Context, pubkey solana.PublicKey) (uin
 
 	// returns in lamports 1 SOL = 1e9 lamports
 	return out.Value, nil
+}
+
+func (p *Provider) GetTokenAccountBalance(
+	ctx context.Context,
+	pubkey solana.PublicKey,
+) (*rpc.GetTokenAccountBalanceResult, error) {
+	return p.rpcClient.GetTokenAccountBalance(
+		ctx,
+		pubkey,
+		rpc.CommitmentConfirmed,
+	)
 }
 
 func (p *Provider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error) {

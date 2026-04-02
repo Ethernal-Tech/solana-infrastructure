@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/sendtx"
 	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -651,15 +652,7 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 			txSignature = transaction.Signatures[0]
 		}
 
-		bin, err := transaction.Message.MarshalBinary()
-		if err != nil {
-			t.notify(ErrorNotification{
-				fmt.Errorf("failed to marshal transaction: %w", err), false})
-
-			t.logger.Warn(fmt.Sprintf("Failed to marshal transaction: %s", err.Error()))
-		}
-
-		innerActionHash := sha256.Sum256(bin)
+		var innerActionHash [32]byte
 
 		for _, instruction := range transaction.Message.Instructions {
 			if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
@@ -718,6 +711,37 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 
 					if parsed == nil {
 						continue
+					}
+
+					// We have to recreate the payload to get the inner action hash
+					// that is the only way to map the payload hash from smart contract that oracle is expecting
+					// to the batch that was actually executed by relayer within this tx
+					if name == "TransactionExecutedEvent" {
+						parsedIx, err := ParseBridgeInstructionData(transaction.Message.Instructions[1].Data)
+						if err != nil {
+							t.notify(ErrorNotification{
+								fmt.Errorf("failed to parse bridge instruction data: %w", err), false})
+
+							t.logger.Warn(fmt.Sprintf("Failed to parse bridge instruction data: %s", err.Error()))
+
+							continue
+						}
+
+						payload := sendtx.SolanaPayload{
+							Blockhash: transaction.Message.RecentBlockhash.String(),
+							Receivers: parsedIx.Receivers,
+							BatchID:   parsedIx.BatchID,
+						}
+
+						payloadBytes, err := payload.Marshal()
+						if err != nil {
+							t.notify(ErrorNotification{
+								fmt.Errorf("failed to marshal payload: %w", err), false})
+
+							t.logger.Warn(fmt.Sprintf("Failed to marshal payload: %s", err.Error()))
+						}
+
+						innerActionHash = sha256.Sum256(payloadBytes)
 					}
 
 					// Found a matching event!
