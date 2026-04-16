@@ -42,15 +42,13 @@ type StorageHandler interface {
 	// error, the tracker will terminate immediately.
 	StoreSlot(StorageTransaction, uint64) error
 
-	// StoreBlock is invoked by the tracker after every successfully processed block. Note that a
-	// block does not necessarily contain transactions, however, the method will still be invoked
-	// for those empty blocks. In transaction-like mode, the method is not invoked directly but rather
-	// wrapped and passed to [ApplyTransaction]. The first argument is a transaction object from the
-	// underlying storage backend, see [ApplyTransaction] for more information. The second argument is
-	// the slot number of the block, and the third argument is the block hash. The implementation is
-	// responsible for storing the block hash for the given slot. If the method returns an error, the
-	// tracker will terminate immediately.
-	StoreBlock(StorageTransaction, uint64, solana.Hash) error
+	// StoreBlock persists a BlockPoint in the per-slot block index. When the
+	// block is first discovered via the chain head it is stored with Processed
+	// set to false. Once the tracker's catch-up loop fully processes that slot
+	// the same method is called again with Processed set to true, updating the
+	// existing entry. If the method returns an error, the tracker will terminate
+	// immediately.
+	StoreBlock(StorageTransaction, BlockPoint) error
 
 	// GetBlockhashBySlot returns the block hash stored for the given slot. If no hash exists for
 	// that exact slot (i.e. it was an empty/skipped slot), it walks forward by incrementing the
@@ -58,16 +56,18 @@ type StorageHandler interface {
 	// which case an error is returned.
 	GetBlockhashBySlot(uint64) (solana.Hash, error)
 
-	// GetSlotByBlockhash returns the slot number stored for the given block hash.
-	// If no slot exists for that hash, it walks backward by decrementing the slot number
-	// until a slot is found or the genesis slot is reached, in which case an error is returned.
-	GetSlotByBlockhash(solana.Hash) (uint64, error)
+	// GetBlockNumberByBlockhash returns the block number (height) stored for the given block hash.
+	// If no block exists for that hash, an error is returned.
+	GetBlockNumberByBlockhash(solana.Hash) (uint64, error)
 
 	// StoreLatestBlockPoint is invoked by the tracker after every successfully processed block.
 	StoreLatestBlockPoint(StorageTransaction, BlockPoint) error
 
 	// GetLatestBlockPoint returns the latest block point data, i.e. block slot and block hash.
 	GetLatestBlockPoint() (*BlockPoint, error)
+
+	// GetLatestProcessedBlockPoint returns the latest processed block point data.
+	GetLatestProcessedBlockPoint() (*BlockPoint, error)
 
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
@@ -125,8 +125,10 @@ type EventRecord struct {
 }
 
 type BlockPoint struct {
-	BlockSlot uint64      `json:"slot"`
-	BlockHash solana.Hash `json:"hash"`
+	BlockSlot   uint64      `json:"slot"`
+	BlockHash   solana.Hash `json:"hash"`
+	BlockNumber uint64      `json:"number"`
+	Processed   bool        `json:"processed"`
 }
 
 var (
@@ -273,14 +275,19 @@ func (b *BoltStorageHandler) StoreSlot(tx StorageTransaction, slot uint64) error
 	return fmt.Errorf("unknown storage transaction type: %T", tx)
 }
 
-func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, slot uint64, hash solana.Hash) error {
+func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) error {
 	storeFn := func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(blocksBucket)
 		if bucket == nil {
 			return fmt.Errorf("cannot find blocks bucket")
 		}
 
-		return bucket.Put(encodeUint64(slot), hash[:])
+		data, err := json.Marshal(bp)
+		if err != nil {
+			return fmt.Errorf("cannot marshal block point: %w", err)
+		}
+
+		return bucket.Put(encodeUint64(bp.BlockSlot), data)
 	}
 
 	if tx == nil {
@@ -377,13 +384,17 @@ func (b *BoltStorageHandler) ApplyTransaction(
 }
 
 func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error) {
-	head, err := b.ReadSlot()
+	bp, err := b.GetLatestBlockPoint()
 	if err != nil {
-		return solana.Hash{}, fmt.Errorf("cannot read current slot: %w", err)
+		return solana.Hash{}, fmt.Errorf("cannot read latest block point: %w", err)
 	}
 
-	if slot >= head {
-		return solana.Hash{}, fmt.Errorf("slot %d has not been processed yet (head is %d)", slot, head)
+	if bp == nil {
+		return solana.Hash{}, fmt.Errorf("no chain head stored yet")
+	}
+
+	if slot > bp.BlockSlot {
+		return solana.Hash{}, fmt.Errorf("slot %d is beyond chain head (head slot is %d)", slot, bp.BlockSlot)
 	}
 
 	var found solana.Hash
@@ -394,22 +405,29 @@ func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error
 			return fmt.Errorf("cannot find blocks bucket")
 		}
 
-		for s := slot; s < head; s++ {
+		for s := slot; s <= bp.BlockSlot; s++ {
 			v := bucket.Get(encodeUint64(s))
-			if v != nil {
-				copy(found[:], v)
-
-				return nil
+			if v == nil {
+				continue
 			}
+
+			var entry BlockPoint
+			if err := json.Unmarshal(v, &entry); err != nil {
+				return fmt.Errorf("cannot unmarshal block point at slot %d: %w", s, err)
+			}
+
+			found = entry.BlockHash
+
+			return nil
 		}
 
-		return fmt.Errorf("no block hash found at or after slot %d (head is %d)", slot, head)
+		return fmt.Errorf("no block hash found at or after slot %d (head slot is %d)", slot, bp.BlockSlot)
 	})
 
 	return found, err
 }
 
-func (b *BoltStorageHandler) GetSlotByBlockhash(hash solana.Hash) (uint64, error) {
+func (b *BoltStorageHandler) GetBlockNumberByBlockhash(hash solana.Hash) (uint64, error) {
 	var found uint64
 
 	err := b.db.View(func(tx *bolt.Tx) error {
@@ -421,18 +439,19 @@ func (b *BoltStorageHandler) GetSlotByBlockhash(hash solana.Hash) (uint64, error
 		cursor := bucket.Cursor()
 
 		for k, v := cursor.Last(); k != nil; k, v = cursor.Prev() {
-			var h solana.Hash
+			var entry BlockPoint
+			if err := json.Unmarshal(v, &entry); err != nil {
+				continue
+			}
 
-			copy(h[:], v)
-
-			if h == hash {
-				found = decodeUint64(k)
+			if entry.BlockHash == hash {
+				found = entry.BlockNumber
 
 				return nil
 			}
 		}
 
-		return fmt.Errorf("no slot found for block hash %s", hash)
+		return fmt.Errorf("no block number found for block hash %s", hash)
 	})
 
 	return found, err
@@ -466,6 +485,38 @@ func (b *BoltStorageHandler) StoreLatestBlockPoint(tx StorageTransaction, blockP
 	}
 
 	return fmt.Errorf("unknown storage transaction type: %T", tx)
+}
+
+func (b *BoltStorageHandler) GetLatestProcessedBlockPoint() (*BlockPoint, error) {
+	var result *BlockPoint
+
+	if err := b.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(blocksBucket)
+		if bucket == nil {
+			return fmt.Errorf("cannot find blocks bucket")
+		}
+
+		cursor := bucket.Cursor()
+
+		for k, v := cursor.Last(); k != nil; k, v = cursor.Prev() {
+			var entry BlockPoint
+			if err := json.Unmarshal(v, &entry); err != nil {
+				continue
+			}
+
+			if entry.Processed {
+				result = &entry
+
+				return nil
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func (b *BoltStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {

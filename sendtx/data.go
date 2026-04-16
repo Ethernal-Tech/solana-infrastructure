@@ -83,6 +83,17 @@ type RegisterTokenLockUnlockDto struct {
 	MinBridgingAmount uint64
 }
 
+type RegisterTokenMintBurnDto struct {
+	AuthorityAddr     string
+	TokenMint         string
+	TokenID           uint16
+	MinBridgingAmount uint64
+	Decimals          uint8
+	Name              string
+	Symbol            string
+	URI               string
+}
+
 type UpdateFeeConfigDto struct {
 	AuthorityAddr   string
 	MinOperationFee uint64

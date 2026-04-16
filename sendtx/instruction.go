@@ -33,11 +33,13 @@ type InstructionConfig struct {
 	feeConfigPDA     solana.PublicKey
 	tokenRegistryPDA solana.PublicKey
 	tokenIDGuardPDA  solana.PublicKey
+	metadataPDA      solana.PublicKey
 
 	tokenProgramID                     solana.PublicKey
 	tokenMetadataProgramID             solana.PublicKey
 	systemProgramID                    solana.PublicKey
 	splAssociatedTokenAccountProgramID solana.PublicKey
+	rentPubkey                         solana.PublicKey
 }
 
 type InstructionConfigOption func(c *InstructionConfig) error
@@ -50,6 +52,7 @@ func NewInstructionConfig(
 		tokenMetadataProgramID:             solana.TokenMetadataProgramID,
 		systemProgramID:                    solana.SystemProgramID,
 		splAssociatedTokenAccountProgramID: solana.SPLAssociatedTokenAccountProgramID,
+		rentPubkey:                         solana.SysVarRentPubkey,
 	}
 
 	if err := cfg.ApplyOptions(options...); err != nil {
@@ -119,6 +122,30 @@ func WithTokenRegistryPDA(mintAccount solana.PublicKey) InstructionConfigOption 
 		}
 
 		c.tokenRegistryPDA = *tokenRegistryPDA
+
+		return nil
+	}
+}
+
+func WithMetadataPDA(mintAccount solana.PublicKey) InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		metadataPDA, _, err := solana.FindProgramAddress(
+			[][]byte{
+				[]byte("metadata"),
+				c.tokenMetadataProgramID[:],
+				mintAccount[:],
+			},
+			c.tokenMetadataProgramID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to derive metadata PDA: %w", err)
+		}
+
+		if err := wallet.ValidatePublicKey(metadataPDA, true); err != nil {
+			return fmt.Errorf("metadata PDA is invalid: %w", err)
+		}
+
+		c.metadataPDA = metadataPDA
 
 		return nil
 	}

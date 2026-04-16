@@ -150,6 +150,18 @@ func (txSnd *TxSender) buildInstructions(
 		}
 
 		return []solana.Instruction{registerTokenLockUnlockIx}, nil
+	case InstructionTypeRegisterTokensMintBurn:
+		tx, ok := txDto.(RegisterTokenMintBurnDto)
+		if !ok {
+			return nil, fmt.Errorf("expected RegisterTokenMintBurnDto for type %s, got %T", instructionType, txDto)
+		}
+
+		registerTokenMintBurnIx, err := txSnd.buildRegisterTokenMintBurnInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build register token mint burn instruction: %w", err)
+		}
+
+		return []solana.Instruction{registerTokenMintBurnIx}, nil
 	case InstructionTypeUpdateFeeConfig:
 		tx, ok := txDto.(UpdateFeeConfigDto)
 		if !ok {
@@ -383,7 +395,7 @@ func (txSnd *TxSender) bridgeTransactionRemainingAccounts(
 	out := make([]*solana.AccountMeta, 0, nMint*3+nXfer*2)
 
 	for _, m := range mints {
-		out = append(out, solana.NewAccountMeta(m, false, false))
+		out = append(out, solana.NewAccountMeta(m, true, false))
 	}
 
 	for _, tr := range transfers {
@@ -657,6 +669,57 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 		txSnd.instructionConfig.tokenRegistryPDA,
 		txSnd.instructionConfig.tokenIDGuardPDA,
 		txSnd.instructionConfig.systemProgramID,
+	)
+}
+
+func (txSnd *TxSender) buildRegisterTokenMintBurnInstruction(tx RegisterTokenMintBurnDto) (solana.Instruction, error) {
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
+	}
+
+	authorityPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
+	}
+
+	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(tx.TokenMint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token mint address: %s: %w", tx.TokenMint, err)
+	}
+
+	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
+	}
+
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithFeeConfigPDA(),
+		WithVaultPDA(),
+		WithMetadataPDA(tokenMintPublicKey),
+		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithTokenIDGuardPDA(tx.TokenID),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	return skyline_program.NewRegisterMintBurnTokenInstruction(
+		tx.TokenID,
+		tx.Decimals,
+		tx.MinBridgingAmount,
+		tx.Name,
+		tx.Symbol,
+		tx.URI,
+		authorityPubKey,
+		txSnd.instructionConfig.feeConfigPDA,
+		txSnd.instructionConfig.vaultPDA,
+		tokenMintPublicKey,
+		txSnd.instructionConfig.metadataPDA,
+		txSnd.instructionConfig.tokenRegistryPDA,
+		txSnd.instructionConfig.tokenIDGuardPDA,
+		txSnd.instructionConfig.tokenProgramID,
+		txSnd.instructionConfig.tokenMetadataProgramID,
+		txSnd.instructionConfig.systemProgramID,
+		txSnd.instructionConfig.rentPubkey,
 	)
 }
 

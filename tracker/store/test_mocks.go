@@ -30,8 +30,8 @@ func (m *MockStorageHandler) StoreSlot(tx StorageTransaction, slot uint64) error
 	return args.Error(0)
 }
 
-func (m *MockStorageHandler) StoreBlock(tx StorageTransaction, slot uint64, hash solana.Hash) error {
-	args := m.Called(tx, slot, hash)
+func (m *MockStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) error {
+	args := m.Called(tx, bp)
 
 	return args.Error(0)
 }
@@ -64,7 +64,7 @@ func (m *MockStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error
 	return args.Get(0).(solana.Hash), args.Error(1)
 }
 
-func (m *MockStorageHandler) GetSlotByBlockhash(hash solana.Hash) (uint64, error) {
+func (m *MockStorageHandler) GetBlockNumberByBlockhash(hash solana.Hash) (uint64, error) {
 	args := m.Called(hash)
 
 	//nolint:forcetypeassert
@@ -78,6 +78,13 @@ func (m *MockStorageHandler) StoreLatestBlockPoint(tx StorageTransaction, blockP
 }
 
 func (m *MockStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {
+	args := m.Called()
+
+	//nolint:forcetypeassert
+	return args.Get(0).(*BlockPoint), args.Error(1)
+}
+
+func (m *MockStorageHandler) GetLatestProcessedBlockPoint() (*BlockPoint, error) {
 	args := m.Called()
 
 	//nolint:forcetypeassert

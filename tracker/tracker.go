@@ -449,6 +449,16 @@ func (t *EventTracker) Start(ctx context.Context) {
 				continue
 			}
 
+			if err := t.refreshChainHead(ctx, fetchedSlot); err != nil {
+				t.notify(ErrorNotification{
+					fmt.Errorf("failed to store chain head: %w", err), true,
+				})
+				t.logger.Error(fmt.Sprintf("Failed to store chain head: %s", err.Error()))
+				t.terminate()
+
+				return
+			}
+
 			if currentSlot > fetchedSlot {
 				t.logger.Debug(
 					fmt.Sprintf("Reached chain head, waiting for slot %d to be %s (currently last %s: %d)",
@@ -464,6 +474,8 @@ func (t *EventTracker) Start(ctx context.Context) {
 			}
 
 			// Catch-up loop: Process all available slots up to chain head
+			lastChainHeadRefresh := time.Now().UTC()
+
 			for currentSlot <= fetchedSlot {
 				// Check for pause/terminate signals during catch-up
 				select {
@@ -478,6 +490,28 @@ func (t *EventTracker) Start(ctx context.Context) {
 					return
 				default:
 				}
+
+				if time.Since(lastChainHeadRefresh) >= t.pollTime {
+					latestSlot, err := t.client.GetSlot(ctx, rpc.CommitmentConfirmed)
+					if err != nil {
+						t.notify(ErrorNotification{
+							fmt.Errorf("failed to fetch latest slot: %w", err), false})
+						t.logger.Error(fmt.Sprintf("Failed to fetch latest slot: %s", err.Error()))
+					} else {
+						if err := t.refreshChainHead(ctx, latestSlot); err != nil {
+							t.notify(ErrorNotification{
+								fmt.Errorf("failed to store chain head: %w", err), true,
+							})
+							t.logger.Error(fmt.Sprintf("Failed to store chain head: %s", err.Error()))
+							t.terminate()
+
+							return
+						}
+
+						lastChainHeadRefresh = time.Now().UTC()
+					}
+				}
+
 				// Process current slot - cannot interrupt (pause, terminate) during processing of a slot
 				t.logger.Info(fmt.Sprintf("Slot %d is %s, processing...", currentSlot, t.commitment))
 
@@ -524,14 +558,32 @@ func (t *EventTracker) Start(ctx context.Context) {
 						continue
 					}
 
-					if isCleanedUpBlockError(err, currentSlot) {
-						t.notify(ErrorNotification{
-							fmt.Errorf("slot %d was cleaned up, does not exist in node", currentSlot), false})
-						t.logger.Error(fmt.Sprintf("Slot %d was cleaned up, does not exist in node", currentSlot))
-						t.terminate()
+					cleanedUp, firstAvailableBlock := isCleanedUpBlockError(err, currentSlot)
+
+					if cleanedUp {
+						t.logger.Warn(fmt.Sprintf("Slot %d was cleaned up, does not exist in node", currentSlot))
+
+						if err := t.storage.StoreSlot(nil, currentSlot-1); err != nil {
+							t.notify(ErrorNotification{
+								fmt.Errorf("failed to store slot after cleanup skip: %w", err), true})
+							t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
+							t.terminate()
+
+							return
+						}
 
 						t.notify(SlotNotification{currentSlot, false})
-						t.logger.Info(fmt.Sprintf("Slot %d was skipped (no block produced), moving to next slot", currentSlot))
+						t.logger.Info(fmt.Sprintf(
+							"Skipped cleaned-up slot %d, advancing to next slot", currentSlot))
+
+						if firstAvailableBlock > currentSlot {
+							t.logger.Info(fmt.Sprintf("Skipped cleaned-up slot %d, advancing to first available block in slot %d",
+								currentSlot, firstAvailableBlock))
+
+							currentSlot = firstAvailableBlock
+
+							continue
+						}
 
 						currentSlot++
 
@@ -568,25 +620,20 @@ func (t *EventTracker) Start(ctx context.Context) {
 
 				t.logger.Info(fmt.Sprintf("Block in slot %d has %d transactions", currentSlot, len(block.Transactions)))
 
-				if err := t.storage.StoreBlock(nil, currentSlot, block.Blockhash); err != nil {
+				var blockNumber uint64
+				if block.BlockHeight != nil {
+					blockNumber = *block.BlockHeight
+				}
+
+				if err := t.storage.StoreBlock(nil, store.BlockPoint{
+					BlockSlot:   currentSlot,
+					BlockHash:   block.Blockhash,
+					BlockNumber: blockNumber,
+					Processed:   true,
+				}); err != nil {
 					t.notify(ErrorNotification{
 						fmt.Errorf("failed to store block: %w", err), true})
 					t.logger.Error(fmt.Sprintf("Failed to store block: %s", err.Error()))
-					t.terminate()
-
-					return
-				}
-
-				blockPoint := store.BlockPoint{
-					BlockSlot: currentSlot,
-					BlockHash: block.Blockhash,
-				}
-
-				if err := t.storage.StoreLatestBlockPoint(nil, blockPoint); err != nil {
-					t.notify(ErrorNotification{
-						fmt.Errorf("failed to store block point: %w", err), true,
-					})
-					t.logger.Error(fmt.Sprintf("Failed to store block point: %s", err.Error()))
 					t.terminate()
 
 					return
@@ -614,6 +661,65 @@ func (t *EventTracker) Start(ctx context.Context) {
 	}()
 }
 
+// refreshChainHead fetches the block at the given slot and persists it as the
+// latest block point. If the slot has no block (skipped/empty), the update is
+// silently skipped and the previously stored chain head remains valid.
+// Only storage write errors are returned; RPC/fetch failures are non-fatal.
+func (t *EventTracker) refreshChainHead(ctx context.Context, slot uint64) error {
+	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", slot))
+
+	slotsWithBlocks, err := t.client.GetBlocksWithLimit(ctx, slot, 10, rpc.CommitmentConfirmed)
+	if err != nil {
+		t.logger.Warn(fmt.Sprintf("Failed to fetch blocks with limit to refresh head %d: %s", slot, err.Error()))
+
+		return nil
+	}
+
+	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
+		10, slot, len(*slotsWithBlocks)), "slotsWithBlocks", *slotsWithBlocks)
+
+	if len(*slotsWithBlocks) == 0 {
+		t.logger.Warn(fmt.Sprintf("No blocks found with limit %d at slot %d", 10, slot))
+
+		return nil
+	}
+
+	block, err := t.client.GetBlockWithOpts(ctx, (*slotsWithBlocks)[len(*slotsWithBlocks)-1], &rpc.GetBlockOpts{
+		TransactionDetails:             rpc.TransactionDetailsNone,
+		MaxSupportedTransactionVersion: new(uint64),
+		Commitment:                     rpc.CommitmentConfirmed,
+	})
+	if err != nil {
+		t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot to refresh head %d: %s", slot, err.Error()))
+
+		return nil
+	}
+
+	if block == nil {
+		t.logger.Warn(fmt.Sprintf("No block found at slot %d", slot))
+
+		return nil
+	}
+
+	var blockNumber uint64
+	if block.BlockHeight != nil {
+		blockNumber = *block.BlockHeight
+	}
+
+	bp := store.BlockPoint{
+		BlockSlot:   slot,
+		BlockHash:   block.Blockhash,
+		BlockNumber: blockNumber,
+		Processed:   false,
+	}
+
+	if err := t.storage.StoreBlock(nil, bp); err != nil {
+		return err
+	}
+
+	return t.storage.StoreLatestBlockPoint(nil, bp)
+}
+
 func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool {
 	//nolint:godox
 	// TODO: We should also check whether any of the tracked programs was called via a CPI.
@@ -631,6 +737,31 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 
 			t.logger.Warn(fmt.Sprintf("Failed to decode transaction %d: %s", txIndex+1, err.Error()))
 
+			continue
+		}
+
+		t.logger.Info(fmt.Sprintf("Transaction %s processed", transaction.Signatures[0].String()))
+
+		hasTrackedProgram := false
+
+		for programID := range t.trackedPrograms {
+			hasAccount, err := transaction.HasAccount(programID)
+			if err != nil {
+				t.notify(ErrorNotification{
+					fmt.Errorf("failed to check if transaction has account: %w", err), false})
+				t.logger.Warn(fmt.Sprintf("Failed to check if transaction has account: %s", err.Error()))
+
+				continue
+			}
+
+			if hasAccount {
+				hasTrackedProgram = true
+
+				break
+			}
+		}
+
+		if !hasTrackedProgram {
 			continue
 		}
 
@@ -717,6 +848,14 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 					// that is the only way to map the payload hash from smart contract that oracle is expecting
 					// to the batch that was actually executed by relayer within this tx
 					if name == "TransactionExecutedEvent" {
+						if len(transaction.Message.Instructions) < 2 {
+							t.logger.Warn(fmt.Sprintf(
+								"TransactionExecutedEvent in tx %d but only %d instructions (need >= 2)",
+								txIndex+1, len(transaction.Message.Instructions)))
+
+							continue
+						}
+
 						parsedIx, err := ParseBridgeInstructionData(transaction.Message.Instructions[1].Data)
 						if err != nil {
 							t.notify(ErrorNotification{
@@ -922,7 +1061,7 @@ func isBlockNotAvailableForSlotError(err error, slot uint64) bool {
 	return strings.Contains(errStr, want) && strings.Contains(errStr, "-32004")
 }
 
-func isCleanedUpBlockError(err error, slot uint64) bool {
+func isCleanedUpBlockError(err error, slot uint64) (bool, uint64) {
 	msg := err.Error()
 
 	var rpcErr *jsonrpc.RPCError
@@ -933,22 +1072,22 @@ func isCleanedUpBlockError(err error, slot uint64) bool {
 
 	prefix := fmt.Sprintf("Block %d cleaned up, does not exist on node.", slot)
 	if !strings.Contains(msg, prefix) {
-		return false
+		return false, 0
 	}
 
 	const marker = "First available block: "
 
 	idx := strings.LastIndex(msg, marker)
 	if idx < 0 {
-		return false
+		return false, 0
 	}
 
 	firstAvailableBlock, parseErr := strconv.ParseUint(strings.TrimSpace(msg[idx+len(marker):]), 10, 64)
 	if parseErr != nil {
-		return false
+		return false, 0
 	}
 
-	return firstAvailableBlock > slot
+	return true, firstAvailableBlock
 }
 
 // setupClient initialises config.Client if it is not already set.

@@ -14,8 +14,12 @@ func TestIsCleanedUpBlockError_JSONRPCError(t *testing.T) {
 		Code:    -32001,
 		Message: "Block 516 cleaned up, does not exist on node. First available block: 517",
 	}
-	assert.True(t, isCleanedUpBlockError(err, 516))
-	assert.False(t, isCleanedUpBlockError(err, 517), "wrong slot should not match")
+	ok, firstAvail := isCleanedUpBlockError(err, 516)
+	assert.True(t, ok)
+	assert.Equal(t, uint64(517), firstAvail)
+
+	ok, _ = isCleanedUpBlockError(err, 517)
+	assert.False(t, ok, "wrong slot should not match")
 }
 
 func TestIsCleanedUpBlockError_WrappedRPCError(t *testing.T) {
@@ -23,7 +27,9 @@ func TestIsCleanedUpBlockError_WrappedRPCError(t *testing.T) {
 		Code:    -32001,
 		Message: "Block 516 cleaned up, does not exist on node. First available block: 517",
 	}
-	assert.True(t, isCleanedUpBlockError(fmt.Errorf("get block: %w", inner), 516))
+	ok, firstAvail := isCleanedUpBlockError(fmt.Errorf("get block: %w", inner), 516)
+	assert.True(t, ok)
+	assert.Equal(t, uint64(517), firstAvail)
 }
 
 func TestIsBlockNotAvailableForSlotError_JSONRPCError(t *testing.T) {
