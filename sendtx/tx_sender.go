@@ -42,13 +42,21 @@ func NewTxSender(txProvider wallet.ITxSubmiter, chainConfig *ChainConfig) *TxSen
 //
 // If a signature is required, it can be added explicitly by calling tx.Sign(...)
 // after the transaction has been created.
+//
+// Additional behavior can be configured via CreateTxOption values. In
+// particular, WithAddressLookupTables enables Address Lookup Tables for
+// instructions that reference many accounts (e.g. bridge_transaction),
+// producing a v0 transaction that fits within the 1232-byte size limit.
 func (txSnd *TxSender) CreateTx(
 	ctx context.Context,
 	solanaPublicKey solana.PublicKey,
 	instructionType InstructionType,
 	recentBlockHash solana.Hash,
 	txDto interface{},
+	opts ...CreateTxOption,
 ) (*solana.Transaction, error) {
+	cfg := applyCreateTxOptions(opts)
+
 	instructions, err := txSnd.buildInstructions(instructionType, txDto)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare bridging request instruction: %w", err)
@@ -60,9 +68,20 @@ func (txSnd *TxSender) CreateTx(
 		builder = builder.AddInstruction(instruction)
 	}
 
+	if len(cfg.addressTables) > 0 {
+		builder = builder.WithOpt(solana.TransactionAddressTables(cfg.addressTables))
+	}
+
 	tx, err := builder.Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction: %w", err)
+	}
+
+	// The builder already emits a v0 message when address tables are provided,
+	// but make the requirement explicit here in case that behavior ever
+	// changes: legacy messages cannot carry AddressTableLookups.
+	if len(cfg.addressTables) > 0 {
+		tx.Message.SetVersion(solana.MessageVersionV0)
 	}
 
 	return tx, nil

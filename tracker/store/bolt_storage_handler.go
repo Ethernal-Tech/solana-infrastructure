@@ -134,6 +134,7 @@ type BlockPoint struct {
 var (
 	slotBucket              = []byte("slot")
 	blocksBucket            = []byte("blocks")
+	blockHashToNumberBucket = []byte("block_hash_to_number")
 	latestBlockPointBucket  = []byte("latestBlockPoint")
 	unprocessedEventsBucket = []byte("unprocessed_events")
 	processedEventsBucket   = []byte("processed_events")
@@ -158,6 +159,11 @@ func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error
 		_, err = tx.CreateBucketIfNotExists(blocksBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the blocks bucket: %w", err)
+		}
+
+		_, err = tx.CreateBucketIfNotExists(blockHashToNumberBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the blockHashToNumber bucket: %w", err)
 		}
 
 		_, err = tx.CreateBucketIfNotExists(latestBlockPointBucket)
@@ -277,9 +283,14 @@ func (b *BoltStorageHandler) StoreSlot(tx StorageTransaction, slot uint64) error
 
 func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) error {
 	storeFn := func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blocksBucket)
-		if bucket == nil {
+		blocks := tx.Bucket(blocksBucket)
+		if blocks == nil {
 			return fmt.Errorf("cannot find blocks bucket")
+		}
+
+		blockHashToNumber := tx.Bucket(blockHashToNumberBucket)
+		if blockHashToNumber == nil {
+			return fmt.Errorf("cannot find blockHashToNumber bucket")
 		}
 
 		data, err := json.Marshal(bp)
@@ -287,7 +298,15 @@ func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) er
 			return fmt.Errorf("cannot marshal block point: %w", err)
 		}
 
-		return bucket.Put(encodeUint64(bp.BlockSlot), data)
+		if err := blocks.Put(encodeUint64(bp.BlockSlot), data); err != nil {
+			return fmt.Errorf("cannot persist block point for slot %d: %w", bp.BlockSlot, err)
+		}
+
+		if err := blockHashToNumber.Put(bp.BlockHash[:], encodeUint64(bp.BlockNumber)); err != nil {
+			return fmt.Errorf("cannot persist block hash index for slot %d: %w", bp.BlockSlot, err)
+		}
+
+		return nil
 	}
 
 	if tx == nil {
@@ -405,9 +424,13 @@ func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error
 			return fmt.Errorf("cannot find blocks bucket")
 		}
 
-		for s := slot; s <= bp.BlockSlot; s++ {
+		for s := slot; ; s-- {
 			v := bucket.Get(encodeUint64(s))
 			if v == nil {
+				if s == 0 {
+					break
+				}
+
 				continue
 			}
 
@@ -421,7 +444,7 @@ func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error
 			return nil
 		}
 
-		return fmt.Errorf("no block hash found at or after slot %d (head slot is %d)", slot, bp.BlockSlot)
+		return fmt.Errorf("no block hash found at or before slot %d", slot)
 	})
 
 	return found, err
@@ -431,27 +454,23 @@ func (b *BoltStorageHandler) GetBlockNumberByBlockhash(hash solana.Hash) (uint64
 	var found uint64
 
 	err := b.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blocksBucket)
+		bucket := tx.Bucket(blockHashToNumberBucket)
 		if bucket == nil {
-			return fmt.Errorf("cannot find blocks bucket")
+			return fmt.Errorf("cannot find blockHashToNumber bucket")
 		}
 
-		cursor := bucket.Cursor()
-
-		for k, v := cursor.Last(); k != nil; k, v = cursor.Prev() {
-			var entry BlockPoint
-			if err := json.Unmarshal(v, &entry); err != nil {
-				continue
-			}
-
-			if entry.BlockHash == hash {
-				found = entry.BlockNumber
-
-				return nil
-			}
+		value := bucket.Get(hash[:])
+		if value == nil {
+			return fmt.Errorf("no block number found for block hash %s", hash)
 		}
 
-		return fmt.Errorf("no block number found for block hash %s", hash)
+		if len(value) != 8 {
+			return fmt.Errorf("invalid block number encoding for block hash %s", hash)
+		}
+
+		found = decodeUint64(value)
+
+		return nil
 	})
 
 	return found, err

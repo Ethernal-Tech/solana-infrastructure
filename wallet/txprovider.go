@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gagliardetto/solana-go"
+	alt "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
@@ -27,6 +28,11 @@ type IChainDataRetriever interface {
 	GetSlot(ctx context.Context) (uint64, error)
 	GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResult, error)
 	GetBlockHeight(ctx context.Context) (uint64, error)
+}
+
+type IAddressLookupTableFetcher interface {
+	GetAddressLookupTable(
+		ctx context.Context, address solana.PublicKey) (*alt.AddressLookupTableState, error)
 }
 
 type ITxSubmiter interface {
@@ -100,6 +106,10 @@ func (p *Provider) GetSlot(ctx context.Context) (uint64, error) {
 	return p.rpcClient.GetSlot(ctx, rpc.CommitmentConfirmed)
 }
 
+func (p *Provider) GetFinalizedSlot(ctx context.Context) (uint64, error) {
+	return p.rpcClient.GetSlot(ctx, rpc.CommitmentFinalized)
+}
+
 func (p *Provider) GetBlockHeight(ctx context.Context) (uint64, error) {
 	return p.rpcClient.GetBlockHeight(ctx, rpc.CommitmentFinalized)
 }
@@ -156,6 +166,12 @@ func (p *Provider) GetSignaturesForAddress(
 			Limit: &limit,
 		},
 	)
+}
+
+func (p *Provider) GetAddressLookupTable(
+	ctx context.Context, address solana.PublicKey,
+) (*alt.AddressLookupTableState, error) {
+	return alt.GetAddressLookupTable(ctx, p.rpcClient, address)
 }
 
 func (p *Provider) SimulateTransaction(

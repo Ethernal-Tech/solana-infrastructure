@@ -32,6 +32,11 @@ var (
 	terminated eventTrackerState = "terminated"
 )
 
+type chainHeadRefreshResult struct {
+	nonFatalErr error
+	fatalErr    error
+}
+
 // SlotNotification represents a notification sent on the chSlot channel.
 type SlotNotification struct {
 	// SlotNumber is the number of the slot that was just processed.
@@ -200,6 +205,9 @@ type EventTracker struct {
 
 	// delay between block fetches for rate limiting
 	blockFetchDelay time.Duration
+
+	chainHeadSlot       uint64
+	chainHeadSlotOffset uint64
 }
 
 // NewEventTracker constructs a new EventTracker instance.
@@ -262,17 +270,19 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 	}
 
 	t := &EventTracker{
-		client:          config.Client,
-		storage:         storage,
-		trackedPrograms: trackedPrograms,
-		commitment:      commitment,
-		logger:          config.Logger,
-		eventSink:       config.EventSink,
-		pollTime:        pollTime,
-		state:           inactive,
-		chPause:         make(chan struct{}),
-		chTerminate:     make(chan struct{}),
-		blockFetchDelay: blockFetchDelay,
+		client:              config.Client,
+		storage:             storage,
+		trackedPrograms:     trackedPrograms,
+		commitment:          commitment,
+		logger:              config.Logger,
+		eventSink:           config.EventSink,
+		pollTime:            pollTime,
+		state:               inactive,
+		chPause:             make(chan struct{}),
+		chTerminate:         make(chan struct{}),
+		blockFetchDelay:     blockFetchDelay,
+		chainHeadSlotOffset: 10,
+		chainHeadSlot:       0,
 	}
 
 	if config.Notifications != nil {
@@ -476,6 +486,9 @@ func (t *EventTracker) Start(ctx context.Context) {
 			// Catch-up loop: Process all available slots up to chain head
 			lastChainHeadRefresh := time.Now().UTC()
 
+			refreshChainHeadResultCh := make(chan chainHeadRefreshResult, 1)
+			refreshInFlight := false
+
 			for currentSlot <= fetchedSlot {
 				// Check for pause/terminate signals during catch-up
 				select {
@@ -491,25 +504,48 @@ func (t *EventTracker) Start(ctx context.Context) {
 				default:
 				}
 
-				if time.Since(lastChainHeadRefresh) >= t.pollTime {
-					latestSlot, err := t.client.GetSlot(ctx, rpc.CommitmentConfirmed)
-					if err != nil {
+				select {
+				case result := <-refreshChainHeadResultCh:
+					refreshInFlight = false
+					lastChainHeadRefresh = time.Now().UTC()
+
+					if result.nonFatalErr != nil {
 						t.notify(ErrorNotification{
-							fmt.Errorf("failed to fetch latest slot: %w", err), false})
-						t.logger.Error(fmt.Sprintf("Failed to fetch latest slot: %s", err.Error()))
-					} else {
-						if err := t.refreshChainHead(ctx, latestSlot); err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to store chain head: %w", err), true,
-							})
-							t.logger.Error(fmt.Sprintf("Failed to store chain head: %s", err.Error()))
-							t.terminate()
+							fmt.Errorf("failed to fetch latest slot: %w", result.nonFatalErr), false})
+						t.logger.Error(fmt.Sprintf("Failed to fetch latest slot: %s", result.nonFatalErr.Error()))
+					}
+
+					if result.fatalErr != nil {
+						t.notify(ErrorNotification{
+							fmt.Errorf("failed to store chain head: %w", result.fatalErr), true,
+						})
+						t.logger.Error(fmt.Sprintf("Failed to store chain head: %s", result.fatalErr.Error()))
+						t.terminate()
+
+						return
+					}
+				default:
+				}
+
+				if !refreshInFlight && time.Since(lastChainHeadRefresh) >= t.pollTime {
+					refreshInFlight = true
+
+					go func() {
+						latestSlot, err := t.client.GetSlot(ctx, rpc.CommitmentConfirmed)
+						if err != nil {
+							refreshChainHeadResultCh <- chainHeadRefreshResult{nonFatalErr: err}
 
 							return
 						}
 
-						lastChainHeadRefresh = time.Now().UTC()
-					}
+						if err := t.refreshChainHead(ctx, latestSlot); err != nil {
+							refreshChainHeadResultCh <- chainHeadRefreshResult{fatalErr: err}
+
+							return
+						}
+
+						refreshChainHeadResultCh <- chainHeadRefreshResult{}
+					}()
 				}
 
 				// Process current slot - cannot interrupt (pause, terminate) during processing of a slot
@@ -623,6 +659,8 @@ func (t *EventTracker) Start(ctx context.Context) {
 				var blockNumber uint64
 				if block.BlockHeight != nil {
 					blockNumber = *block.BlockHeight
+				} else {
+					t.logger.Warn(fmt.Sprintf("No block height found for block at slot %d", currentSlot))
 				}
 
 				if err := t.storage.StoreBlock(nil, store.BlockPoint{
@@ -668,7 +706,12 @@ func (t *EventTracker) Start(ctx context.Context) {
 func (t *EventTracker) refreshChainHead(ctx context.Context, slot uint64) error {
 	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", slot))
 
-	slotsWithBlocks, err := t.client.GetBlocksWithLimit(ctx, slot, 10, rpc.CommitmentConfirmed)
+	startSlot := t.chainHeadSlot
+	if t.chainHeadSlot == 0 {
+		startSlot = slot - t.chainHeadSlotOffset
+	}
+
+	slotsWithBlocks, err := t.client.GetBlocks(ctx, startSlot, &slot, rpc.CommitmentConfirmed)
 	if err != nil {
 		t.logger.Warn(fmt.Sprintf("Failed to fetch blocks with limit to refresh head %d: %s", slot, err.Error()))
 
@@ -676,46 +719,52 @@ func (t *EventTracker) refreshChainHead(ctx context.Context, slot uint64) error 
 	}
 
 	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
-		10, slot, len(*slotsWithBlocks)), "slotsWithBlocks", *slotsWithBlocks)
+		10, slot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
 
-	if len(*slotsWithBlocks) == 0 {
-		t.logger.Warn(fmt.Sprintf("No blocks found with limit %d at slot %d", 10, slot))
-
+	if len(slotsWithBlocks) == 0 {
 		return nil
 	}
 
-	block, err := t.client.GetBlockWithOpts(ctx, (*slotsWithBlocks)[len(*slotsWithBlocks)-1], &rpc.GetBlockOpts{
-		TransactionDetails:             rpc.TransactionDetailsNone,
-		MaxSupportedTransactionVersion: new(uint64),
-		Commitment:                     rpc.CommitmentConfirmed,
-	})
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot to refresh head %d: %s", slot, err.Error()))
+	var bp store.BlockPoint
 
-		return nil
+	for _, slot := range slotsWithBlocks {
+		block, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
+			TransactionDetails:             rpc.TransactionDetailsNone,
+			MaxSupportedTransactionVersion: new(uint64),
+			Commitment:                     rpc.CommitmentConfirmed,
+		})
+		if err != nil {
+			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
+
+			continue
+		}
+
+		if block == nil {
+			t.logger.Warn(fmt.Sprintf("No block found at slot %d", slot))
+
+			continue
+		}
+
+		var blockNumber uint64
+		if block.BlockHeight != nil {
+			blockNumber = *block.BlockHeight
+		} else {
+			t.logger.Warn(fmt.Sprintf("No block height found for block at slot %d", slot))
+		}
+
+		bp = store.BlockPoint{
+			BlockSlot:   slot,
+			BlockHash:   block.Blockhash,
+			BlockNumber: blockNumber,
+			Processed:   false,
+		}
+
+		if err := t.storage.StoreBlock(nil, bp); err != nil {
+			return err
+		}
 	}
 
-	if block == nil {
-		t.logger.Warn(fmt.Sprintf("No block found at slot %d", slot))
-
-		return nil
-	}
-
-	var blockNumber uint64
-	if block.BlockHeight != nil {
-		blockNumber = *block.BlockHeight
-	}
-
-	bp := store.BlockPoint{
-		BlockSlot:   slot,
-		BlockHash:   block.Blockhash,
-		BlockNumber: blockNumber,
-		Processed:   false,
-	}
-
-	if err := t.storage.StoreBlock(nil, bp); err != nil {
-		return err
-	}
+	t.chainHeadSlot = slot
 
 	return t.storage.StoreLatestBlockPoint(nil, bp)
 }
@@ -747,9 +796,9 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 		for programID := range t.trackedPrograms {
 			hasAccount, err := transaction.HasAccount(programID)
 			if err != nil {
-				t.notify(ErrorNotification{
-					fmt.Errorf("failed to check if transaction has account: %w", err), false})
-				t.logger.Warn(fmt.Sprintf("Failed to check if transaction has account: %s", err.Error()))
+				// If we can't check if the transaction has the account
+				// we process the transaction just in case
+				hasTrackedProgram = true
 
 				continue
 			}
