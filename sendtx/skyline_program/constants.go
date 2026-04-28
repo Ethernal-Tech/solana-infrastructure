@@ -3,6 +3,8 @@
 
 package skyline_program
 
+import solanago "github.com/gagliardetto/solana-go"
+
 // Constants defined in the IDL:
 
 // Seed string used to derive BridgingRequest Program Derived Addresses (PDAs).
@@ -56,3 +58,6 @@ var VALIDATOR_SET_SEED = []byte{118, 97, 108, 105, 100, 97, 116, 111, 114, 45, 1
 //
 // This seed is combined with the vault address to create a unique address for the vault account.
 var VAULT_SEED = []byte{118, 97, 117, 108, 116}
+
+// Canonical wrapped SOL (wSOL) SPL mint address.
+var WSOL_MINT = solanago.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112")

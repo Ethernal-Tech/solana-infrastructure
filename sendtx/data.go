@@ -70,6 +70,12 @@ type BridgeVSUDto struct {
 	BatchID                uint64
 }
 
+type HotWalletIncrementDto struct {
+	SenderAddr string
+	TokenMint  string
+	Amount     uint64
+}
+
 type InitializeDto struct {
 	AuthorityAddr string
 	Validators    []string

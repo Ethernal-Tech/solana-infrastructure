@@ -145,6 +145,18 @@ func (txSnd *TxSender) buildInstructions(
 		}
 
 		return []solana.Instruction{bridgeVSUIx}, nil
+	case InstructionTypeHotWalletIncrement:
+		tx, ok := txDto.(HotWalletIncrementDto)
+		if !ok {
+			return nil, fmt.Errorf("expected HotWalletIncrementDto for type %s, got %T", instructionType, txDto)
+		}
+
+		hotWalletIncrementIx, err := txSnd.buildHotWalletIncrementInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build hot wallet increment instruction: %w", err)
+		}
+
+		return []solana.Instruction{hotWalletIncrementIx}, nil
 	case InstructionTypeInitialize:
 		tx, ok := txDto.(InitializeDto)
 		if !ok {
@@ -602,6 +614,62 @@ func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instru
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.systemProgramID,
+	)
+}
+
+func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementDto) (solana.Instruction, error) {
+	if tx.Amount == 0 {
+		return nil, fmt.Errorf("amount must be greater than zero")
+	}
+
+	if err := wallet.ValidateAddress(tx.SenderAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.SenderAddr, err)
+	}
+
+	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse sender public key from address %s: %w", tx.SenderAddr, err)
+	}
+
+	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(tx.TokenMint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token mint address: %s: %w", tx.TokenMint, err)
+	}
+
+	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
+	}
+
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithVaultPDA(),
+		WithTokenRegistryPDA(tokenMintPublicKey),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	senderAta, _, err := wallet.FindAssociatedTokenAddress(senderPubKey, tokenMintPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to find sender associated token account for token %s: %w", tokenMintPublicKey.String(), err)
+	}
+
+	vaultAta, _, err := wallet.FindAssociatedTokenAddress(txSnd.instructionConfig.vaultPDA, tokenMintPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to find vault associated token account for token %s: %w", tokenMintPublicKey.String(), err)
+	}
+
+	return skyline_program.NewHotWalletIncrementInstruction(
+		tx.Amount,
+		senderPubKey,
+		senderAta,
+		txSnd.instructionConfig.vaultPDA,
+		vaultAta,
+		tokenMintPublicKey,
+		txSnd.instructionConfig.tokenProgramID,
+		txSnd.instructionConfig.systemProgramID,
+		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
 	)
 }
 

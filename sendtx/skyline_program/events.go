@@ -29,6 +29,13 @@ func ParseAnyEvent(eventData []byte) (any, error) {
 			return nil, fmt.Errorf("failed to unmarshal event as FeeConfigUpdatedEvent: %w", err)
 		}
 		return value, nil
+	case Event_HotWalletIncrementEvent:
+		value := new(HotWalletIncrementEvent)
+		err := value.UnmarshalWithDecoder(decoder)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event as HotWalletIncrementEvent: %w", err)
+		}
+		return value, nil
 	case Event_LockUnlockTokenRegisteredEvent:
 		value := new(LockUnlockTokenRegisteredEvent)
 		err := value.UnmarshalWithDecoder(decoder)
@@ -92,6 +99,23 @@ func ParseEvent_FeeConfigUpdatedEvent(eventData []byte) (*FeeConfigUpdatedEvent,
 	err = event.UnmarshalWithDecoder(decoder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal event of type FeeConfigUpdatedEvent: %w", err)
+	}
+	return event, nil
+}
+
+func ParseEvent_HotWalletIncrementEvent(eventData []byte) (*HotWalletIncrementEvent, error) {
+	decoder := binary.NewBorshDecoder(eventData)
+	discriminator, err := decoder.ReadDiscriminator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek discriminator: %w", err)
+	}
+	if discriminator != Event_HotWalletIncrementEvent {
+		return nil, fmt.Errorf("expected discriminator %v, got %s", Event_HotWalletIncrementEvent, binary.FormatDiscriminator(discriminator))
+	}
+	event := new(HotWalletIncrementEvent)
+	err = event.UnmarshalWithDecoder(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal event of type HotWalletIncrementEvent: %w", err)
 	}
 	return event, nil
 }

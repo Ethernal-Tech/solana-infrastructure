@@ -1034,6 +1034,183 @@ func TestBridgeVSU(t *testing.T) {
 	})
 }
 
+func TestHotWalletIncrement(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+	expectedSig := solana.Signature{}
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(MockTxSubmiter)
+		tokenMint := solana.NewWallet().PublicKey().String()
+
+		txDto := HotWalletIncrementDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			TokenMint:  tokenMint,
+			Amount:     1_000,
+		}
+
+		expectedSig = mustSignedSignature(t, []byte("hot-wallet-increment-success"), senderPrivateKey)
+
+		mockProvider.On("SendTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeHotWalletIncrement,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(MockTxSubmiter)
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		txDto := BridgeRequestDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			DstChainID: common.ChainIDPrime,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeHotWalletIncrement,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected HotWalletIncrementDto")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+
+	t.Run("invalid sender address", func(t *testing.T) {
+		mockProvider := new(MockTxSubmiter)
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		txDto := HotWalletIncrementDto{
+			SenderAddr: "invalid-address",
+			TokenMint:  solana.NewWallet().PublicKey().String(),
+			Amount:     1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeHotWalletIncrement,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid sender address")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+
+	t.Run("invalid token mint", func(t *testing.T) {
+		mockProvider := new(MockTxSubmiter)
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		txDto := HotWalletIncrementDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			TokenMint:  "invalid-mint",
+			Amount:     1_000,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeHotWalletIncrement,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to parse token mint address")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+
+	t.Run("zero amount", func(t *testing.T) {
+		mockProvider := new(MockTxSubmiter)
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		txDto := HotWalletIncrementDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			TokenMint:  solana.NewWallet().PublicKey().String(),
+			Amount:     0,
+		}
+
+		_, err = txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeHotWalletIncrement,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "amount must be greater than zero")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+}
+
 func TestInitialize(t *testing.T) {
 	ctx := context.Background()
 

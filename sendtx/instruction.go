@@ -12,13 +12,14 @@ import (
 type InstructionType string
 
 const (
-	InstructionCreateInstruction     InstructionType = "create_instruction"
-	InstructionTypeSOLTransfer       InstructionType = "transfer"
-	InstructionTypeSPLTransfer       InstructionType = "spl_transfer"
-	InstructionTypeBridgingRequest   InstructionType = "bridge_request"
-	InstructionTypeBridgeTransaction InstructionType = "bridge_transaction"
-	InstructionTypeBridgeVsu         InstructionType = "bridge_vsu"
-	InstructionTypeInitialize        InstructionType = "bridge_initialize"
+	InstructionCreateInstruction      InstructionType = "create_instruction"
+	InstructionTypeSOLTransfer        InstructionType = "transfer"
+	InstructionTypeSPLTransfer        InstructionType = "spl_transfer"
+	InstructionTypeBridgingRequest    InstructionType = "bridge_request"
+	InstructionTypeBridgeTransaction  InstructionType = "bridge_transaction"
+	InstructionTypeBridgeVsu          InstructionType = "bridge_vsu"
+	InstructionTypeHotWalletIncrement InstructionType = "hot_wallet_increment"
+	InstructionTypeInitialize         InstructionType = "bridge_initialize"
 
 	InstructionTypeRegisterTokensLockUnlock InstructionType = "register_tokens_lock_unlock"
 	InstructionTypeRegisterTokensMintBurn   InstructionType = "register_tokens_mint_burn"

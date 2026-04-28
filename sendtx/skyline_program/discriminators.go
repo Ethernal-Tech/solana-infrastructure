@@ -16,6 +16,7 @@ var (
 var (
 	Event_BridgeRequestEvent             = [8]byte{162, 122, 193, 76, 126, 59, 162, 143}
 	Event_FeeConfigUpdatedEvent          = [8]byte{139, 188, 235, 116, 222, 55, 95, 201}
+	Event_HotWalletIncrementEvent        = [8]byte{59, 172, 72, 125, 228, 239, 221, 175}
 	Event_LockUnlockTokenRegisteredEvent = [8]byte{190, 93, 87, 189, 153, 86, 187, 120}
 	Event_MintBurnTokenRegisteredEvent   = [8]byte{45, 109, 50, 56, 70, 204, 25, 113}
 	Event_TransactionExecutedEvent       = [8]byte{138, 185, 121, 218, 65, 145, 254, 24}
@@ -27,6 +28,7 @@ var (
 	Instruction_BridgeRequest           = [8]byte{174, 128, 16, 189, 59, 127, 134, 232}
 	Instruction_BridgeTransaction       = [8]byte{73, 26, 119, 117, 56, 168, 209, 98}
 	Instruction_BridgeVsu               = [8]byte{251, 55, 181, 69, 163, 28, 202, 10}
+	Instruction_HotWalletIncrement      = [8]byte{60, 140, 196, 63, 147, 195, 18, 90}
 	Instruction_Initialize              = [8]byte{175, 175, 109, 31, 13, 152, 155, 237}
 	Instruction_RegisterLockUnlockToken = [8]byte{102, 136, 172, 174, 201, 166, 219, 233}
 	Instruction_RegisterMintBurnToken   = [8]byte{20, 106, 92, 113, 59, 41, 253, 128}

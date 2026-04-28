@@ -352,6 +352,87 @@ func UnmarshalFeeConfigUpdatedEvent(buf []byte) (*FeeConfigUpdatedEvent, error) 
 	return obj, nil
 }
 
+// Emitted when tokens are deposited (locked) into the bridge vault via
+// the `hot_wallet_increment` instruction.
+//
+// Off-chain systems use this to track top-ups of vault liquidity for
+// lock/unlock bridgeable tokens.
+type HotWalletIncrementEvent struct {
+	// The depositor's wallet pubkey.
+	Sender solanago.PublicKey `json:"sender"`
+
+	// The mint of the tokens that were locked into the vault.
+	Mint solanago.PublicKey `json:"mint"`
+
+	// The amount of tokens locked, in the mint's native base units.
+	Amount uint64 `json:"amount"`
+}
+
+func (obj HotWalletIncrementEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
+	// Serialize `Sender`:
+	err = encoder.Encode(obj.Sender)
+	if err != nil {
+		return errors.NewField("Sender", err)
+	}
+	// Serialize `Mint`:
+	err = encoder.Encode(obj.Mint)
+	if err != nil {
+		return errors.NewField("Mint", err)
+	}
+	// Serialize `Amount`:
+	err = encoder.Encode(obj.Amount)
+	if err != nil {
+		return errors.NewField("Amount", err)
+	}
+	return nil
+}
+
+func (obj HotWalletIncrementEvent) Marshal() ([]byte, error) {
+	buf := bytes.NewBuffer(nil)
+	encoder := binary.NewBorshEncoder(buf)
+	err := obj.MarshalWithEncoder(encoder)
+	if err != nil {
+		return nil, fmt.Errorf("error while encoding HotWalletIncrementEvent: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (obj *HotWalletIncrementEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
+	// Deserialize `Sender`:
+	err = decoder.Decode(&obj.Sender)
+	if err != nil {
+		return errors.NewField("Sender", err)
+	}
+	// Deserialize `Mint`:
+	err = decoder.Decode(&obj.Mint)
+	if err != nil {
+		return errors.NewField("Mint", err)
+	}
+	// Deserialize `Amount`:
+	err = decoder.Decode(&obj.Amount)
+	if err != nil {
+		return errors.NewField("Amount", err)
+	}
+	return nil
+}
+
+func (obj *HotWalletIncrementEvent) Unmarshal(buf []byte) error {
+	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	if err != nil {
+		return fmt.Errorf("error while unmarshaling HotWalletIncrementEvent: %w", err)
+	}
+	return nil
+}
+
+func UnmarshalHotWalletIncrementEvent(buf []byte) (*HotWalletIncrementEvent, error) {
+	obj := new(HotWalletIncrementEvent)
+	err := obj.Unmarshal(buf)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
 // Emitted when a LockUnlock token is registered.
 // Gateway parity: TokenRegistered event in Gateway.sol
 //

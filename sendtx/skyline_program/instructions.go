@@ -267,6 +267,79 @@ func NewBridgeVsuInstruction(
 	), nil
 }
 
+// Builds a "hot_wallet_increment" instruction.
+// Lock additional lock/unlock tokens into the bridge vault (hot wallet). //  // Top-ups vault liquidity using canonical wrapped SOL (wSOL) only. // The mint must be exactly `So11111111111111111111111111111111111111112`. //  // # Arguments // * `ctx`    - Instruction context // * `amount` - Raw token amount to lock (must be > 0) //  // # Errors // * `InvalidAmount`     - `amount` is zero // * `InsufficientFunds` - Signer's ATA balance is below `amount` // * `InvalidVault`      - Provided vault ATA doesn't match the canonical ATA // * `InvalidMintToken` - Mint is not canonical wSOL
+func NewHotWalletIncrementInstruction(
+	// Params:
+	amountParam uint64,
+
+	// Accounts:
+	signerAccount solanago.PublicKey,
+	signersAtaAccount solanago.PublicKey,
+	vaultAccount solanago.PublicKey,
+	vaultAtaAccount solanago.PublicKey,
+	mintAccount solanago.PublicKey,
+	tokenProgramAccount solanago.PublicKey,
+	systemProgramAccount solanago.PublicKey,
+	associatedTokenProgramAccount solanago.PublicKey,
+) (solanago.Instruction, error) {
+	buf__ := new(bytes.Buffer)
+	enc__ := binary.NewBorshEncoder(buf__)
+
+	// Encode the instruction discriminator.
+	err := enc__.WriteBytes(Instruction_HotWalletIncrement[:], false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
+	}
+	{
+		// Serialize `amountParam`:
+		err = enc__.Encode(amountParam)
+		if err != nil {
+			return nil, errors.NewField("amountParam", err)
+		}
+	}
+	accounts__ := solanago.AccountMetaSlice{}
+
+	// Add the accounts to the instruction.
+	{
+		// Account 0 "signer": Writable, Signer, Required
+		// The user depositing tokens into the bridge hot wallet.
+		// Pays rent if the vault ATA needs to be created.
+		accounts__.Append(solanago.NewAccountMeta(signerAccount, true, true))
+		// Account 1 "signers_ata": Writable, Non-signer, Required
+		// The signer's source token account. Tokens are debited from here.
+		accounts__.Append(solanago.NewAccountMeta(signersAtaAccount, true, false))
+		// Account 2 "vault": Read-only, Non-signer, Required
+		// Bridge vault PDA — owns `vault_ata`.
+		accounts__.Append(solanago.NewAccountMeta(vaultAccount, false, false))
+		// Account 3 "vault_ata": Writable, Non-signer, Required
+		// The vault's associated token account for the deposited mint.
+		// Created on-demand inside `process_instruction` if missing —
+		// `init_if_needed` is avoided to keep the program free of that feature.
+		accounts__.Append(solanago.NewAccountMeta(vaultAtaAccount, true, false))
+		// Account 4 "mint": Read-only, Non-signer, Required, Address: So11111111111111111111111111111111111111112
+		// The mint of the tokens being deposited.
+		// Must be canonical wrapped SOL mint.
+		accounts__.Append(solanago.NewAccountMeta(mintAccount, false, false))
+		// Account 5 "token_program": Read-only, Non-signer, Required, Address: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+		// SPL Token program.
+		accounts__.Append(solanago.NewAccountMeta(tokenProgramAccount, false, false))
+		// Account 6 "system_program": Read-only, Non-signer, Required
+		// System program — required for ATA creation CPI.
+		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
+		// Account 7 "associated_token_program": Read-only, Non-signer, Required, Address: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
+		// Associated token program — required for ATA creation CPI.
+		accounts__.Append(solanago.NewAccountMeta(associatedTokenProgramAccount, false, false))
+	}
+
+	// Create the instruction.
+	return solanago.NewInstruction(
+		ProgramID,
+		accounts__,
+		buf__.Bytes(),
+	), nil
+}
+
 // Builds a "initialize" instruction.
 // Initializes the full bridge system: // 1. ValidatorSet — validators, threshold, bump // 2. Vault        — bump // 3. FeeConfig    — operational fee, relayer fee estimate, treasury, authority //  // # Arguments // * `ctx`                  - The instruction context // * `validators`           - Vector of validator public keys // * `last_id`              - Last known batch ID (for replay protection) // * `min_operational_fee`  - Minimum bridge tip sent to treasury (lamports) // * `bridge_fee`           - Estimated destination chain gas cost (lamports) //  // # Errors // * `ValidatorsNotUnique`    - Duplicate validators provided // * `MaxValidatorsExceeded`  - Too many validators // * `MinValidatorsNotMet`    - Too few validators
 func NewInitializeInstruction(
