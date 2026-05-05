@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/require"
@@ -48,6 +49,7 @@ func TestBridgingTransaction_WithAddressLookupTables(t *testing.T) {
 	}
 
 	txDto := BridgeTransactionDto{
+		ProgramID:      skyline_program.ProgramID,
 		SenderAddr:     senderPrivateKey.PublicKey().String(),
 		BatchID:        42,
 		PayloadBytes:   []byte{1, 2, 3, 4},

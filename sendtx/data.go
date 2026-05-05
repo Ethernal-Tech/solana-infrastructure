@@ -48,6 +48,7 @@ type BridgingTxReceiver struct {
 }
 
 type BridgeRequestDto struct {
+	ProgramID    solana.PublicKey
 	DstChainID   string
 	SenderAddr   string
 	Receivers    []BridgingTxReceiver
@@ -56,6 +57,7 @@ type BridgeRequestDto struct {
 }
 
 type BridgeTransactionDto struct {
+	ProgramID      solana.PublicKey
 	SenderAddr     string
 	Receivers      []BridgingTxReceiver
 	BatchID        uint64
@@ -64,6 +66,7 @@ type BridgeTransactionDto struct {
 }
 
 type BridgeVSUDto struct {
+	ProgramID              solana.PublicKey
 	SenderAddr             string
 	AddingValidatorAddrs   []string
 	RemovingValidatorAddrs []string
@@ -71,18 +74,21 @@ type BridgeVSUDto struct {
 }
 
 type HotWalletIncrementDto struct {
+	ProgramID  solana.PublicKey
 	SenderAddr string
 	TokenMint  string
 	Amount     uint64
 }
 
 type InitializeDto struct {
+	ProgramID     solana.PublicKey
 	AuthorityAddr string
 	Validators    []string
 	LastID        uint64
 }
 
 type RegisterTokenLockUnlockDto struct {
+	ProgramID         solana.PublicKey
 	AuthorityAddr     string
 	TokenMint         string
 	TokenID           uint16
@@ -90,6 +96,7 @@ type RegisterTokenLockUnlockDto struct {
 }
 
 type RegisterTokenMintBurnDto struct {
+	ProgramID         solana.PublicKey
 	AuthorityAddr     string
 	TokenMint         string
 	TokenID           uint16
@@ -101,6 +108,7 @@ type RegisterTokenMintBurnDto struct {
 }
 
 type UpdateFeeConfigDto struct {
+	ProgramID       solana.PublicKey
 	AuthorityAddr   string
 	MinOperationFee uint64
 	BridgingFee     uint64

@@ -15,7 +15,7 @@ func TestBridgeTransactionALTAddresses_NoMints(t *testing.T) {
 		&ChainConfig{},
 	)
 
-	got, err := txSender.BridgeTransactionALTAddresses(nil)
+	got, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, nil)
 	require.NoError(t, err)
 	require.Len(t, got, 6, "only the 6 global keys should be returned for no mints")
 
@@ -46,7 +46,7 @@ func TestBridgeTransactionALTAddresses_WithMints(t *testing.T) {
 		solana.NewWallet().PublicKey(),
 	}
 
-	got, err := txSender.BridgeTransactionALTAddresses(mints)
+	got, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, mints)
 	require.NoError(t, err)
 	require.Len(t, got, 6+3*len(mints))
 
@@ -81,7 +81,7 @@ func TestBridgeTransactionALTAddresses_ExcludesSenderAndReceiver(t *testing.T) {
 	sender := solana.NewWallet().PublicKey()
 	receiver := solana.NewWallet().PublicKey()
 
-	got, err := txSender.BridgeTransactionALTAddresses([]solana.PublicKey{mint})
+	got, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, []solana.PublicKey{mint})
 	require.NoError(t, err)
 
 	receiverATA, _, err := wallet.FindAssociatedTokenAddress(receiver, mint)
@@ -104,7 +104,7 @@ func TestBridgeTransactionALTAddresses_RejectsZeroMint(t *testing.T) {
 		&ChainConfig{},
 	)
 
-	_, err := txSender.BridgeTransactionALTAddresses([]solana.PublicKey{{}})
+	_, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, []solana.PublicKey{{}})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid mint")
 }
@@ -123,13 +123,13 @@ func TestBridgeTransactionALTAddresses_RoundTripExtend(t *testing.T) {
 	newMint := solana.NewWallet().PublicKey()
 
 	oldSet, err := txSender.BridgeTransactionALTAddresses(
-		[]solana.PublicKey{oldMint})
+		skyline_program.ProgramID, []solana.PublicKey{oldMint})
 	require.NoError(t, err)
 
 	require.Len(t, oldSet, 9)
 
 	fullSet, err := txSender.BridgeTransactionALTAddresses(
-		[]solana.PublicKey{oldMint, newMint})
+		skyline_program.ProgramID, []solana.PublicKey{oldMint, newMint})
 	require.NoError(t, err)
 
 	require.Len(t, fullSet, 12)

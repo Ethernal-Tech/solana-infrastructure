@@ -48,7 +48,6 @@ type InstructionConfigOption func(c *InstructionConfig) error
 func NewInstructionConfig(
 	options ...InstructionConfigOption) (*InstructionConfig, error) {
 	cfg := &InstructionConfig{
-		programKey:                         skyline_program.ProgramID,
 		tokenProgramID:                     solana.TokenProgramID,
 		tokenMetadataProgramID:             solana.TokenMetadataProgramID,
 		systemProgramID:                    solana.SystemProgramID,
@@ -71,6 +70,18 @@ func (c *InstructionConfig) ApplyOptions(options ...InstructionConfigOption) err
 	}
 
 	return nil
+}
+
+func WithProgramID(programID solana.PublicKey) InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		if err := wallet.ValidatePublicKey(programID, true); err != nil {
+			return fmt.Errorf("invalid program ID: %w", err)
+		}
+
+		c.programKey = programID
+
+		return nil
+	}
 }
 
 func WithValidatorSetPDA() InstructionConfigOption {

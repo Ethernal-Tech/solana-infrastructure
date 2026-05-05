@@ -32,9 +32,15 @@ import (
 //     mint set. ALTAdmin deduplicates against what's already in the ALT, so
 //     the emitted extend instruction will carry only the 3 new entries.
 func (txSnd *TxSender) BridgeTransactionALTAddresses(
+	programID solana.PublicKey,
 	mints []solana.PublicKey,
 ) ([]solana.PublicKey, error) {
+	if err := requireBridgeProgramID(programID); err != nil {
+		return nil, err
+	}
+
 	if err := txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
 		WithValidatorSetPDA(),
 		WithVaultPDA(),
 	); err != nil {

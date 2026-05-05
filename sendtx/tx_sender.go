@@ -247,6 +247,12 @@ func (txSnd *TxSender) buildInstructions(
 }
 
 func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := checkFees(txSnd.chainConfig, tx.BridgingFee, tx.OperationFee); err != nil {
 		return nil, fmt.Errorf("fees do not meet the minimum requirements: %w", err)
 	}
@@ -290,6 +296,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
 		WithValidatorSetPDA(),
 		WithVaultPDA(),
 		WithTokenRegistryPDA(tokenMintPublicKey),
@@ -310,7 +317,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 			"failed to find vault associated token account for token %s: %w", tokenMintPublicKey.String(), err)
 	}
 
-	return skyline_program.NewBridgeRequestInstruction(
+	bridgeRequestIx, err := skyline_program.NewBridgeRequestInstruction(
 		receiver.TokenAmount.Amount.Uint64(),
 		receiver.Address,
 		tx.DstChainID,
@@ -329,9 +336,20 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		txSnd.chainConfig.TreasuryAddress,
 		txSnd.chainConfig.BridgingFeeAddress,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build bridge request instruction: %w", err)
+	}
+
+	return withProgramID(bridgeRequestIx, programID)
 }
 
 func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto) ([]solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := wallet.ValidateAddress(tx.SenderAddr, false); err != nil {
 		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.SenderAddr, err)
 	}
@@ -377,7 +395,11 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to parse sender public key from address %s: %w", tx.SenderAddr, err)
 	}
 
-	if err = txSnd.instructionConfig.ApplyOptions(WithValidatorSetPDA(), WithVaultPDA()); err != nil {
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
+		WithValidatorSetPDA(),
+		WithVaultPDA(),
+	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
@@ -397,7 +419,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to build bridge transaction instruction: %w", err)
 	}
 
-	remainingAccounts, err := txSnd.bridgeTransactionRemainingAccounts(mints, transferItems)
+	remainingAccounts, err := txSnd.bridgeTransactionRemainingAccounts(programID, mints, transferItems)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge transaction remaining accounts: %w", err)
 	}
@@ -408,7 +430,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 	}
 
 	bridgeTxIxFinal := solana.NewInstruction(
-		bridgeTxIx.ProgramID(), append(bridgeTxIx.Accounts(), remainingAccounts...), data)
+		programID, append(bridgeTxIx.Accounts(), remainingAccounts...), data)
 
 	batchedEd25519Ix, err := txSnd.buildBatchedEd25519Instruction(tx.SignaturePairs, tx.PayloadBytes)
 	if err != nil {
@@ -418,7 +440,25 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 	return []solana.Instruction{batchedEd25519Ix, bridgeTxIxFinal}, nil
 }
 
+func withProgramID(instruction solana.Instruction, programID solana.PublicKey) (solana.Instruction, error) {
+	data, err := instruction.Data()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get instruction data: %w", err)
+	}
+
+	return solana.NewInstruction(programID, instruction.Accounts(), data), nil
+}
+
+func requireBridgeProgramID(programID solana.PublicKey) error {
+	if programID == (solana.PublicKey{}) {
+		return fmt.Errorf("bridge program ID is required")
+	}
+
+	return nil
+}
+
 func (txSnd *TxSender) bridgeTransactionRemainingAccounts(
+	programID solana.PublicKey,
 	mints []solana.PublicKey,
 	transfers []skyline_program.TransferItem,
 ) ([]*solana.AccountMeta, error) {
@@ -435,7 +475,7 @@ func (txSnd *TxSender) bridgeTransactionRemainingAccounts(
 
 	for _, m := range mints {
 		reg, _, err := solana.FindProgramAddress([][]byte{skyline_program.TOKEN_REGISTRY_SEED, m[:]},
-			skyline_program.ProgramID)
+			programID)
 		if err != nil {
 			return nil, err
 		}
@@ -565,6 +605,12 @@ func (txSnd *TxSender) buildBatchedEd25519Instruction(
 }
 
 func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := wallet.ValidateAddress(tx.SenderAddr, true); err != nil {
 		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.SenderAddr, err)
 	}
@@ -603,11 +649,14 @@ func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instru
 		return nil, fmt.Errorf("failed to parse sender public key from address %s: %w", tx.SenderAddr, err)
 	}
 
-	if err = txSnd.instructionConfig.ApplyOptions(WithValidatorSetPDA()); err != nil {
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
+		WithValidatorSetPDA(),
+	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
-	return skyline_program.NewBridgeVsuInstruction(
+	bridgeVSUIx, err := skyline_program.NewBridgeVsuInstruction(
 		addingValidatorPubKeys,
 		removingValidatorPubKeys,
 		tx.BatchID,
@@ -615,9 +664,20 @@ func (txSnd *TxSender) buildBridgeVSUInstruction(tx BridgeVSUDto) (solana.Instru
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.systemProgramID,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build bridge VSU instruction: %w", err)
+	}
+
+	return withProgramID(bridgeVSUIx, programID)
 }
 
 func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if tx.Amount == 0 {
 		return nil, fmt.Errorf("amount must be greater than zero")
 	}
@@ -642,6 +702,7 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
 		WithVaultPDA(),
 		WithTokenRegistryPDA(tokenMintPublicKey),
 	); err != nil {
@@ -660,7 +721,7 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 			"failed to find vault associated token account for token %s: %w", tokenMintPublicKey.String(), err)
 	}
 
-	return skyline_program.NewHotWalletIncrementInstruction(
+	hotWalletIncrementIx, err := skyline_program.NewHotWalletIncrementInstruction(
 		tx.Amount,
 		senderPubKey,
 		senderAta,
@@ -671,9 +732,20 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build hot wallet increment instruction: %w", err)
+	}
+
+	return withProgramID(hotWalletIncrementIx, programID)
 }
 
 func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
 		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.AuthorityAddr, err)
 	}
@@ -699,11 +771,15 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
-		WithValidatorSetPDA(), WithVaultPDA(), WithFeeConfigPDA()); err != nil {
+		WithProgramID(programID),
+		WithValidatorSetPDA(),
+		WithVaultPDA(),
+		WithFeeConfigPDA(),
+	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
-	return skyline_program.NewInitializeInstruction(
+	initializeIx, err := skyline_program.NewInitializeInstruction(
 		validatorPubKeys,
 		&tx.LastID,
 		txSnd.chainConfig.MinOperationFeeAmount,
@@ -716,10 +792,21 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build initialize instruction: %w", err)
+	}
+
+	return withProgramID(initializeIx, programID)
 }
 
 func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 	tx RegisterTokenLockUnlockDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
 		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
 	}
@@ -740,6 +827,7 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
 		WithFeeConfigPDA(),
 		WithTokenRegistryPDA(tokenMintPublicKey),
 		WithTokenIDGuardPDA(tx.TokenID),
@@ -747,7 +835,7 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
-	return skyline_program.NewRegisterLockUnlockTokenInstruction(
+	registerLockUnlockIx, err := skyline_program.NewRegisterLockUnlockTokenInstruction(
 		tx.TokenID,
 		tx.MinBridgingAmount,
 		authorityPubKey,
@@ -757,9 +845,20 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 		txSnd.instructionConfig.tokenIDGuardPDA,
 		txSnd.instructionConfig.systemProgramID,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build register lock/unlock token instruction: %w", err)
+	}
+
+	return withProgramID(registerLockUnlockIx, programID)
 }
 
 func (txSnd *TxSender) buildRegisterTokenMintBurnInstruction(tx RegisterTokenMintBurnDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
 		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
 	}
@@ -780,6 +879,7 @@ func (txSnd *TxSender) buildRegisterTokenMintBurnInstruction(tx RegisterTokenMin
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
 		WithFeeConfigPDA(),
 		WithVaultPDA(),
 		WithMetadataPDA(tokenMintPublicKey),
@@ -789,7 +889,7 @@ func (txSnd *TxSender) buildRegisterTokenMintBurnInstruction(tx RegisterTokenMin
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
-	return skyline_program.NewRegisterMintBurnTokenInstruction(
+	registerMintBurnIx, err := skyline_program.NewRegisterMintBurnTokenInstruction(
 		tx.TokenID,
 		tx.Decimals,
 		tx.MinBridgingAmount,
@@ -808,9 +908,20 @@ func (txSnd *TxSender) buildRegisterTokenMintBurnInstruction(tx RegisterTokenMin
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.rentPubkey,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build register mint/burn token instruction: %w", err)
+	}
+
+	return withProgramID(registerMintBurnIx, programID)
 }
 
 func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
 	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
 		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
 	}
@@ -844,7 +955,14 @@ func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (s
 		}
 	}
 
-	return skyline_program.NewUpdateFeeConfigInstruction(
+	if err = txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
+		WithFeeConfigPDA(),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	updateFeeConfigIx, err := skyline_program.NewUpdateFeeConfigInstruction(
 		&tx.MinOperationFee,
 		&tx.BridgingFee,
 		&tx.UpdateTreasury,
@@ -854,6 +972,11 @@ func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (s
 		newTreasuryAcc,
 		newRelayerAcc,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build update fee config instruction: %w", err)
+	}
+
+	return withProgramID(updateFeeConfigIx, programID)
 }
 
 func (txSnd *TxSender) buildTransferInstruction(tx SOLTransferDto) (solana.Instruction, error) {

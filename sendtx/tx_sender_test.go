@@ -86,6 +86,7 @@ func TestBridgingRequest(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -136,12 +137,55 @@ func TestBridgingRequest(t *testing.T) {
 		mockProvider.AssertExpectations(t)
 	})
 
+	t.Run("requires bridge program ID", func(t *testing.T) {
+		mockProvider := new(MockTxSubmiter)
+		tokenMint := solana.NewWallet().PublicKey().String()
+
+		txDto := BridgeRequestDto{
+			SenderAddr: senderPrivateKey.PublicKey().String(),
+			DstChainID: common.ChainIDPrime,
+			Receivers: []BridgingTxReceiver{
+				{
+					Address: "0x1234567890123456789012345678901234567890",
+					TokenAmount: wallet.TokenAmount{
+						Amount:    new(big.Int).SetUint64(1000),
+						TokenMint: tokenMint,
+					},
+				},
+			},
+		}
+
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				MinAmountToBridge:     0,
+				TreasuryAddress:       treasuryWallet.PublicKey,
+				BridgingFeeAddress:    feeWallet.PublicKey,
+				MinFeeForBridging:     0,
+				MinOperationFeeAmount: 0,
+			},
+		)
+
+		_, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeBridgingRequest,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "bridge program ID is required")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+
 	t.Run("invalid treasury address", func(t *testing.T) {
 		mockProvider := new(MockTxSubmiter)
 
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -182,6 +226,7 @@ func TestBridgingRequest(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -220,6 +265,7 @@ func TestBridgingRequest(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -262,6 +308,7 @@ func TestBridgingRequest(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -304,6 +351,7 @@ func TestBridgingRequest(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -355,6 +403,7 @@ func TestBridgingRequest(t *testing.T) {
 
 		// Pass BridgeTransactionDto instead of BridgeRequestDto
 		txDto := BridgeTransactionDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
@@ -390,6 +439,7 @@ func TestBridgingRequest(t *testing.T) {
 		)
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: "invalid-address",
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -418,6 +468,7 @@ func TestBridgingRequest(t *testing.T) {
 	t.Run("invalid token mint in receiver", func(t *testing.T) {
 		mockProvider := new(MockTxSubmiter)
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -458,6 +509,7 @@ func TestBridgingRequest(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -544,6 +596,7 @@ func TestBridgingTransaction(t *testing.T) {
 		}
 
 		txDto := BridgeTransactionDto{
+			ProgramID:      skyline_program.ProgramID,
 			SenderAddr:     senderPrivateKey.PublicKey().String(),
 			BatchID:        42,
 			PayloadBytes:   payloadBytes,
@@ -607,6 +660,7 @@ func TestBridgingTransaction(t *testing.T) {
 
 		// Pass BridgeRequestDto instead of BridgeTransactionDto
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: solana.NewWallet().PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -643,6 +697,7 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		txDto := BridgeTransactionDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: "invalid-address",
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
@@ -679,6 +734,7 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		txDto := BridgeTransactionDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			BatchID:    42,
 			Receivers: []BridgingTxReceiver{
@@ -727,6 +783,7 @@ func TestBridgeVSU(t *testing.T) {
 		validator2 := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeVSUDto{
+			ProgramID:            skyline_program.ProgramID,
 			SenderAddr:           senderPrivateKey.PublicKey().String(),
 			AddingValidatorAddrs: []string{validator1, validator2},
 			BatchID:              42,
@@ -775,6 +832,7 @@ func TestBridgeVSU(t *testing.T) {
 		validator2 := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeVSUDto{
+			ProgramID:              skyline_program.ProgramID,
 			SenderAddr:             senderPrivateKey.PublicKey().String(),
 			RemovingValidatorAddrs: []string{validator1, validator2},
 			BatchID:                43,
@@ -823,6 +881,7 @@ func TestBridgeVSU(t *testing.T) {
 		validator3 := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeVSUDto{
+			ProgramID:              skyline_program.ProgramID,
 			SenderAddr:             senderPrivateKey.PublicKey().String(),
 			AddingValidatorAddrs:   []string{validator1, validator2},
 			RemovingValidatorAddrs: []string{validator3},
@@ -877,6 +936,7 @@ func TestBridgeVSU(t *testing.T) {
 
 		// Pass BridgeRequestDto instead of BridgeVSUDto
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -914,6 +974,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		txDto := BridgeVSUDto{
+			ProgramID:            skyline_program.ProgramID,
 			SenderAddr:           "invalid-address",
 			AddingValidatorAddrs: []string{solana.NewWallet().PublicKey().String()},
 			BatchID:              1,
@@ -943,6 +1004,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		txDto := BridgeVSUDto{
+			ProgramID:            skyline_program.ProgramID,
 			SenderAddr:           senderPrivateKey.PublicKey().String(),
 			AddingValidatorAddrs: []string{"invalid-address"},
 			BatchID:              1,
@@ -972,6 +1034,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		txDto := BridgeVSUDto{
+			ProgramID:              skyline_program.ProgramID,
 			SenderAddr:             senderPrivateKey.PublicKey().String(),
 			RemovingValidatorAddrs: []string{"invalid-address"},
 			BatchID:                1,
@@ -1009,6 +1072,7 @@ func TestBridgeVSU(t *testing.T) {
 		)
 
 		txDto := BridgeVSUDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			BatchID:    1,
 		}
@@ -1054,6 +1118,7 @@ func TestHotWalletIncrement(t *testing.T) {
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := HotWalletIncrementDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			TokenMint:  tokenMint,
 			Amount:     1_000,
@@ -1106,6 +1171,7 @@ func TestHotWalletIncrement(t *testing.T) {
 		)
 
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 		}
@@ -1134,6 +1200,7 @@ func TestHotWalletIncrement(t *testing.T) {
 		)
 
 		txDto := HotWalletIncrementDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: "invalid-address",
 			TokenMint:  solana.NewWallet().PublicKey().String(),
 			Amount:     1_000,
@@ -1163,6 +1230,7 @@ func TestHotWalletIncrement(t *testing.T) {
 		)
 
 		txDto := HotWalletIncrementDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			TokenMint:  "invalid-mint",
 			Amount:     1_000,
@@ -1192,6 +1260,7 @@ func TestHotWalletIncrement(t *testing.T) {
 		)
 
 		txDto := HotWalletIncrementDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			TokenMint:  solana.NewWallet().PublicKey().String(),
 			Amount:     0,
@@ -1235,6 +1304,7 @@ func TestInitialize(t *testing.T) {
 		validator4 := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{validator1, validator2, validator3, validator4},
 			LastID:        0,
@@ -1284,6 +1354,7 @@ func TestInitialize(t *testing.T) {
 		}
 
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    validators,
 			LastID:        42,
@@ -1327,6 +1398,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("success with empty validators list", func(t *testing.T) {
 		mockProvider := new(MockTxSubmiter)
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{},
 			LastID:        0,
@@ -1379,6 +1451,7 @@ func TestInitialize(t *testing.T) {
 
 		// Pass BridgeRequestDto instead of InitializeDto
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 			Receivers: []BridgingTxReceiver{
@@ -1416,6 +1489,7 @@ func TestInitialize(t *testing.T) {
 		)
 
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: "invalid-address",
 			Validators:    []string{solana.NewWallet().PublicKey().String()},
 			LastID:        0,
@@ -1447,6 +1521,7 @@ func TestInitialize(t *testing.T) {
 		validValidator := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{validValidator, "invalid-address"},
 			LastID:        0,
@@ -1470,6 +1545,7 @@ func TestInitialize(t *testing.T) {
 		validator := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{validator, validator},
 			LastID:        0,
@@ -1531,6 +1607,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 		mockProvider := new(MockTxSubmiter)
 
 		txDto := RegisterTokenLockUnlockDto{
+			ProgramID:         skyline_program.ProgramID,
 			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
 			TokenMint:         solana.NewWallet().PublicKey().String(),
 			TokenID:           1,
@@ -1586,6 +1663,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		// Pass InitializeDto instead of RegisterTokenLockUnlockDto
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{solana.NewWallet().PublicKey().String()},
 			LastID:        0,
@@ -1616,6 +1694,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 		)
 
 		txDto := RegisterTokenLockUnlockDto{
+			ProgramID:         skyline_program.ProgramID,
 			AuthorityAddr:     "invalid-address",
 			TokenMint:         solana.NewWallet().PublicKey().String(),
 			TokenID:           1,
@@ -1647,6 +1726,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 		)
 
 		txDto := RegisterTokenLockUnlockDto{
+			ProgramID:         skyline_program.ProgramID,
 			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
 			TokenMint:         "invalid-mint",
 			TokenID:           1,
@@ -1679,6 +1759,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 
 		// Use zero public key which will fail ValidatePublicKey
 		txDto := RegisterTokenLockUnlockDto{
+			ProgramID:         skyline_program.ProgramID,
 			AuthorityAddr:     senderPrivateKey.PublicKey().String(),
 			TokenMint:         solana.PublicKey{}.String(),
 			TokenID:           1,
@@ -1722,6 +1803,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 		newRelayer := solana.NewWallet().PublicKey().String()
 
 		txDto := UpdateFeeConfigDto{
+			ProgramID:       skyline_program.ProgramID,
 			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
 			MinOperationFee: 10,
 			BridgingFee:     20,
@@ -1781,6 +1863,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		// Pass InitializeDto instead of UpdateFeeConfigDto
 		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
 			Validators:    []string{solana.NewWallet().PublicKey().String()},
 			LastID:        0,
@@ -1811,6 +1894,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 		)
 
 		txDto := UpdateFeeConfigDto{
+			ProgramID:       skyline_program.ProgramID,
 			AuthorityAddr:   "invalid-address",
 			MinOperationFee: 10,
 			BridgingFee:     20,
@@ -1841,6 +1925,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 		)
 
 		txDto := UpdateFeeConfigDto{
+			ProgramID:       skyline_program.ProgramID,
 			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
 			MinOperationFee: 10,
 			BridgingFee:     20,
@@ -1874,6 +1959,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 		)
 
 		txDto := UpdateFeeConfigDto{
+			ProgramID:       skyline_program.ProgramID,
 			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
 			MinOperationFee: 10,
 			BridgingFee:     20,
@@ -1973,6 +2059,7 @@ func TestSOLTransfer(t *testing.T) {
 
 		// Pass BridgeRequestDto instead of SOLTransferDto
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 		}
@@ -2137,6 +2224,7 @@ func TestSPLTransfer(t *testing.T) {
 
 		// Pass BridgeRequestDto instead of SPLTransferDto
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 		}
@@ -2347,6 +2435,7 @@ func TestCreateInstruction(t *testing.T) {
 
 		// Pass BridgeRequestDto instead of CreateInstructionDto
 		txDto := BridgeRequestDto{
+			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
 			DstChainID: common.ChainIDPrime,
 		}
@@ -2518,6 +2607,7 @@ func TestMarshalTransaction(t *testing.T) {
 	}
 
 	txDto := BridgeTransactionDto{
+		ProgramID:  skyline_program.ProgramID,
 		SenderAddr: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
 		Receivers: []BridgingTxReceiver{
 			{
