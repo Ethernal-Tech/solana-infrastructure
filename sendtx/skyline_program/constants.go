@@ -42,6 +42,9 @@ const MAX_VALIDATORS_CHANGE = uint32(0xa)
 // various attack vectors and lack proper consensus mechanisms.
 const MIN_VALIDATORS = uint32(0x4)
 
+// Seed string used to derive the global `ProgramConfig` PDA (version / deploy metadata).
+var PROGRAM_CONFIG_SEED = []byte{112, 114, 111, 103, 114, 97, 109, 95, 99, 111, 110, 102, 105, 103}
+
 // Seed string used to derive TokenIdGuard PDA
 var TOKEN_ID_GUARD_SEED = []byte{116, 111, 107, 101, 110, 95, 105, 100, 95, 103, 117, 97, 114, 100}
 

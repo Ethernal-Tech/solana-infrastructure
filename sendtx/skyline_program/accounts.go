@@ -22,6 +22,13 @@ func ParseAnyAccount(accountData []byte) (any, error) {
 			return nil, fmt.Errorf("failed to unmarshal account as FeeConfig: %w", err)
 		}
 		return value, nil
+	case Account_ProgramConfig:
+		value := new(ProgramConfig)
+		err := value.UnmarshalWithDecoder(decoder)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal account as ProgramConfig: %w", err)
+		}
+		return value, nil
 	case Account_TokenIdGuard:
 		value := new(TokenIdGuard)
 		err := value.UnmarshalWithDecoder(decoder)
@@ -68,6 +75,23 @@ func ParseAccount_FeeConfig(accountData []byte) (*FeeConfig, error) {
 	err = acc.UnmarshalWithDecoder(decoder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal account of type FeeConfig: %w", err)
+	}
+	return acc, nil
+}
+
+func ParseAccount_ProgramConfig(accountData []byte) (*ProgramConfig, error) {
+	decoder := binary.NewBorshDecoder(accountData)
+	discriminator, err := decoder.ReadDiscriminator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek discriminator: %w", err)
+	}
+	if discriminator != Account_ProgramConfig {
+		return nil, fmt.Errorf("expected discriminator %v, got %s", Account_ProgramConfig, binary.FormatDiscriminator(discriminator))
+	}
+	acc := new(ProgramConfig)
+	err = acc.UnmarshalWithDecoder(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal account of type ProgramConfig: %w", err)
 	}
 	return acc, nil
 }

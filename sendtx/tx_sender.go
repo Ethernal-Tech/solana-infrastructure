@@ -16,13 +16,13 @@ import (
 )
 
 type TxSender struct {
-	txProvider        wallet.ITxSubmiter
+	txProvider        wallet.ITxProvider
 	chainConfig       *ChainConfig
 	instructionConfig *InstructionConfig
 	retryOptions      []infracommon.RetryConfigOption
 }
 
-func NewTxSender(txProvider wallet.ITxSubmiter, chainConfig *ChainConfig) *TxSender {
+func NewTxSender(txProvider wallet.ITxProvider, chainConfig *ChainConfig) *TxSender {
 	txSnd := &TxSender{
 		txProvider:  txProvider,
 		chainConfig: chainConfig,
@@ -205,6 +205,18 @@ func (txSnd *TxSender) buildInstructions(
 		}
 
 		return []solana.Instruction{updateFeeConfigIx}, nil
+	case InstructionTypeUpdateProgramVersion:
+		tx, ok := txDto.(UpdateProgramVersionDto)
+		if !ok {
+			return nil, fmt.Errorf("expected UpdateProgramVersionDto for type %s, got %T", instructionType, txDto)
+		}
+
+		updateProgramVersionIx, err := txSnd.buildUpdateProgramVersionInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build update program version instruction: %w", err)
+		}
+
+		return []solana.Instruction{updateProgramVersionIx}, nil
 	case InstructionTypeSOLTransfer:
 		tx, ok := txDto.(SOLTransferDto)
 		if !ok {
@@ -739,6 +751,43 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 	return withProgramID(hotWalletIncrementIx, programID)
 }
 
+// GetProgramConfig loads the global ProgramConfig PDA (version / deploy metadata) from the cluster.
+// The tx provider must implement GetAccountInfo (e.g. wallet.Provider).
+func (txSnd *TxSender) GetProgramConfig(
+	ctx context.Context,
+	programID solana.PublicKey,
+) (*skyline_program.ProgramConfig, error) {
+	if err := requireBridgeProgramID(programID); err != nil {
+		return nil, err
+	}
+
+	programConfigPDA, _, err := solana.FindProgramAddress([][]byte{skyline_program.PROGRAM_CONFIG_SEED}, programID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive program config PDA: %w", err)
+	}
+
+	info, err := txSnd.txProvider.GetAccountInfo(ctx, programConfigPDA)
+	if err != nil {
+		return nil, fmt.Errorf("get program config account: %w", err)
+	}
+
+	if info == nil || info.Value == nil || info.Value.Data == nil {
+		return nil, fmt.Errorf("program config account not found at %s", programConfigPDA.String())
+	}
+
+	raw := info.Value.Data.GetBinary()
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("program config account at %s has empty data", programConfigPDA.String())
+	}
+
+	cfg, err := skyline_program.ParseAccount_ProgramConfig(raw)
+	if err != nil {
+		return nil, fmt.Errorf("decode program config: %w", err)
+	}
+
+	return cfg, nil
+}
+
 func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Instruction, error) {
 	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
 		return nil, err
@@ -775,6 +824,7 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		WithValidatorSetPDA(),
 		WithVaultPDA(),
 		WithFeeConfigPDA(),
+		WithProgramConfigPDA(),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
@@ -788,6 +838,7 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.vaultPDA,
 		txSnd.instructionConfig.feeConfigPDA,
+		txSnd.instructionConfig.programConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
 		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,
@@ -977,6 +1028,43 @@ func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (s
 	}
 
 	return withProgramID(updateFeeConfigIx, programID)
+}
+
+func (txSnd *TxSender) buildUpdateProgramVersionInstruction(
+	tx UpdateProgramVersionDto,
+) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
+	}
+
+	authorityPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
+	}
+
+	if err := txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
+		WithProgramConfigPDA(),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	updateIx, err := skyline_program.NewUpdateProgramVersionInstruction(
+		tx.VersionString,
+		authorityPubKey,
+		txSnd.instructionConfig.programConfigPDA,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build update program version instruction: %w", err)
+	}
+
+	return withProgramID(updateIx, programID)
 }
 
 func (txSnd *TxSender) buildTransferInstruction(tx SOLTransferDto) (solana.Instruction, error) {

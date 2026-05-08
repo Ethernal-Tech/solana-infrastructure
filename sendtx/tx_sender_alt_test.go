@@ -58,7 +58,7 @@ func TestBridgingTransaction_WithAddressLookupTables(t *testing.T) {
 	}
 
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{
 			TreasuryAddress:    treasuryWallet.PublicKey,
 			BridgingFeeAddress: feeWallet.PublicKey,
@@ -134,7 +134,7 @@ func TestCreateTx_NoALTOption_KeepsLegacyBehavior(t *testing.T) {
 	require.NoError(t, err)
 
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{
 			TreasuryAddress:    treasuryWallet.PublicKey,
 			BridgingFeeAddress: feeWallet.PublicKey,

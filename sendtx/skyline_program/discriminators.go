@@ -6,6 +6,7 @@ package skyline_program
 // Account discriminators
 var (
 	Account_FeeConfig     = [8]byte{143, 52, 146, 187, 219, 123, 76, 155}
+	Account_ProgramConfig = [8]byte{196, 210, 90, 231, 144, 149, 140, 63}
 	Account_TokenIdGuard  = [8]byte{176, 49, 94, 91, 195, 131, 192, 192}
 	Account_TokenRegistry = [8]byte{227, 255, 152, 118, 84, 200, 145, 120}
 	Account_ValidatorSet  = [8]byte{35, 206, 97, 202, 43, 11, 11, 127}
@@ -19,6 +20,7 @@ var (
 	Event_HotWalletIncrementEvent        = [8]byte{59, 172, 72, 125, 228, 239, 221, 175}
 	Event_LockUnlockTokenRegisteredEvent = [8]byte{190, 93, 87, 189, 153, 86, 187, 120}
 	Event_MintBurnTokenRegisteredEvent   = [8]byte{45, 109, 50, 56, 70, 204, 25, 113}
+	Event_ProgramVersionUpdatedEvent     = [8]byte{92, 102, 239, 253, 213, 16, 58, 87}
 	Event_TransactionExecutedEvent       = [8]byte{138, 185, 121, 218, 65, 145, 254, 24}
 	Event_ValidatorSetUpdatedEvent       = [8]byte{92, 126, 111, 2, 195, 25, 244, 136}
 )
@@ -33,4 +35,5 @@ var (
 	Instruction_RegisterLockUnlockToken = [8]byte{102, 136, 172, 174, 201, 166, 219, 233}
 	Instruction_RegisterMintBurnToken   = [8]byte{20, 106, 92, 113, 59, 41, 253, 128}
 	Instruction_UpdateFeeConfig         = [8]byte{104, 184, 103, 242, 88, 151, 107, 20}
+	Instruction_UpdateProgramVersion    = [8]byte{235, 132, 215, 225, 213, 43, 43, 38}
 )

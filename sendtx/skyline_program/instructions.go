@@ -341,7 +341,7 @@ func NewHotWalletIncrementInstruction(
 }
 
 // Builds a "initialize" instruction.
-// Initializes the full bridge system: // 1. ValidatorSet — validators, threshold, bump // 2. Vault        — bump // 3. FeeConfig    — operational fee, relayer fee estimate, treasury, authority //  // # Arguments // * `ctx`                  - The instruction context // * `validators`           - Vector of validator public keys // * `last_id`              - Last known batch ID (for replay protection) // * `min_operational_fee`  - Minimum bridge tip sent to treasury (lamports) // * `bridge_fee`           - Estimated destination chain gas cost (lamports) //  // # Errors // * `ValidatorsNotUnique`    - Duplicate validators provided // * `MaxValidatorsExceeded`  - Too many validators // * `MinValidatorsNotMet`    - Too few validators
+// Initializes the full bridge system: // 1. ValidatorSet — validators, threshold, bump // 2. Vault        — bump // 3. FeeConfig    — operational fee, relayer fee estimate, treasury, authority // 4. ProgramConfig — on-chain version metadata (readable without a tx) //  // # Arguments // * `ctx`                  - The instruction context // * `validators`           - Vector of validator public keys // * `last_id`              - Last known batch ID (for replay protection) // * `min_operational_fee`  - Minimum bridge tip sent to treasury (lamports) // * `bridge_fee`           - Estimated destination chain gas cost (lamports) //  // # Errors // * `ValidatorsNotUnique`    - Duplicate validators provided // * `MaxValidatorsExceeded`  - Too many validators // * `MinValidatorsNotMet`    - Too few validators
 func NewInitializeInstruction(
 	// Params:
 	validatorsParam []solanago.PublicKey,
@@ -354,6 +354,7 @@ func NewInitializeInstruction(
 	validatorSetAccount solanago.PublicKey,
 	vaultAccount solanago.PublicKey,
 	feeConfigAccount solanago.PublicKey,
+	programConfigAccount solanago.PublicKey,
 	treasuryAccount solanago.PublicKey,
 	relayerAccount solanago.PublicKey,
 	systemProgramAccount solanago.PublicKey,
@@ -417,13 +418,16 @@ func NewInitializeInstruction(
 		// Account 3 "fee_config": Writable, Non-signer, Required
 		// The fee config PDA — created here, one per program
 		accounts__.Append(solanago.NewAccountMeta(feeConfigAccount, true, false))
-		// Account 4 "treasury": Read-only, Non-signer, Required
+		// Account 4 "program_config": Writable, Non-signer, Required
+		// Global program version / deploy metadata — one per program, read-only for integrations.
+		accounts__.Append(solanago.NewAccountMeta(programConfigAccount, true, false))
+		// Account 5 "treasury": Read-only, Non-signer, Required
 		// The treasury account that will receive operational fees
 		accounts__.Append(solanago.NewAccountMeta(treasuryAccount, false, false))
-		// Account 5 "relayer": Read-only, Non-signer, Required
+		// Account 6 "relayer": Read-only, Non-signer, Required
 		// Relayer account — receives bridge fees directly
 		accounts__.Append(solanago.NewAccountMeta(relayerAccount, false, false))
-		// Account 6 "system_program": Read-only, Non-signer, Required
+		// Account 7 "system_program": Read-only, Non-signer, Required
 		// The system program for account creation
 		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
 	}
@@ -751,6 +755,60 @@ func NewUpdateFeeConfigInstruction(
 		// Account 3 "new_relayer": Read-only, Non-signer, Required
 		// New relayer account — only needed when updating relayer.
 		accounts__.Append(solanago.NewAccountMeta(newRelayerAccount, false, false))
+	}
+
+	// Create the instruction.
+	return solanago.NewInstruction(
+		ProgramID,
+		accounts__,
+		buf__.Bytes(),
+	), nil
+}
+
+// Builds a "update_program_version" instruction.
+//
+// Updates `ProgramConfig.version_string` to match a new deployment.
+//
+// Program upgrades do not write to this PDA; the bridge authority must call this
+// after upgrading so integrations reading the account see the correct version.
+//
+// # Arguments
+// * `version_string` - Semver display string (at most 32 bytes)
+//
+// # Errors
+// * `Unauthorized`         - Signer is not `ProgramConfig.authority`
+// * `VersionStringTooLong`   - `version_string` exceeds storage limit
+func NewUpdateProgramVersionInstruction(
+	// Params:
+	versionStringParam string,
+
+	// Accounts:
+	authorityAccount solanago.PublicKey,
+	programConfigAccount solanago.PublicKey,
+) (solanago.Instruction, error) {
+	buf__ := new(bytes.Buffer)
+	enc__ := binary.NewBorshEncoder(buf__)
+
+	// Encode the instruction discriminator.
+	err := enc__.WriteBytes(Instruction_UpdateProgramVersion[:], false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
+	}
+	{
+		// Serialize `versionStringParam`:
+		err = enc__.Encode(versionStringParam)
+		if err != nil {
+			return nil, errors.NewField("versionStringParam", err)
+		}
+	}
+	accounts__ := solanago.AccountMetaSlice{}
+
+	// Add the accounts to the instruction.
+	{
+		// Account 0 "authority": Read-only, Signer, Required
+		accounts__.Append(solanago.NewAccountMeta(authorityAccount, false, true))
+		// Account 1 "program_config": Writable, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(programConfigAccount, true, false))
 	}
 
 	// Create the instruction.

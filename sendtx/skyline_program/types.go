@@ -618,6 +618,137 @@ func UnmarshalMintBurnTokenRegisteredEvent(buf []byte) (*MintBurnTokenRegistered
 	return obj, nil
 }
 
+// Global program metadata stored in a well-known PDA (`PROGRAM_CONFIG_SEED`).
+//
+// Initialized once in `initialize`. Other programs and clients can read this account
+// without sending a transaction.
+type ProgramConfig struct {
+	// Human-readable semver copied from the deployed build (see `env!("CARGO_PKG_VERSION")` at init).
+	VersionString string `json:"versionString"`
+
+	// Unix timestamp when this account was created (`Clock::unix_timestamp` at `initialize`).
+	DeployedAt int64 `json:"deployedAt"`
+
+	// Bridge authority at deployment (same signer as initial `FeeConfig.authority`).
+	Authority solanago.PublicKey `json:"authority"`
+}
+
+func (obj ProgramConfig) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
+	// Serialize `VersionString`:
+	err = encoder.Encode(obj.VersionString)
+	if err != nil {
+		return errors.NewField("VersionString", err)
+	}
+	// Serialize `DeployedAt`:
+	err = encoder.Encode(obj.DeployedAt)
+	if err != nil {
+		return errors.NewField("DeployedAt", err)
+	}
+	// Serialize `Authority`:
+	err = encoder.Encode(obj.Authority)
+	if err != nil {
+		return errors.NewField("Authority", err)
+	}
+	return nil
+}
+
+func (obj ProgramConfig) Marshal() ([]byte, error) {
+	buf := bytes.NewBuffer(nil)
+	encoder := binary.NewBorshEncoder(buf)
+	err := obj.MarshalWithEncoder(encoder)
+	if err != nil {
+		return nil, fmt.Errorf("error while encoding ProgramConfig: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (obj *ProgramConfig) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
+	// Deserialize `VersionString`:
+	err = decoder.Decode(&obj.VersionString)
+	if err != nil {
+		return errors.NewField("VersionString", err)
+	}
+	// Deserialize `DeployedAt`:
+	err = decoder.Decode(&obj.DeployedAt)
+	if err != nil {
+		return errors.NewField("DeployedAt", err)
+	}
+	// Deserialize `Authority`:
+	err = decoder.Decode(&obj.Authority)
+	if err != nil {
+		return errors.NewField("Authority", err)
+	}
+	return nil
+}
+
+func (obj *ProgramConfig) Unmarshal(buf []byte) error {
+	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	if err != nil {
+		return fmt.Errorf("error while unmarshaling ProgramConfig: %w", err)
+	}
+	return nil
+}
+
+func UnmarshalProgramConfig(buf []byte) (*ProgramConfig, error) {
+	obj := new(ProgramConfig)
+	err := obj.Unmarshal(buf)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// Emitted when the authority updates `ProgramConfig.version_string` after deploy.
+type ProgramVersionUpdatedEvent struct {
+	// Semver string (max 32 bytes on-chain).
+	VersionString string `json:"versionString"`
+}
+
+func (obj ProgramVersionUpdatedEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
+	// Serialize `VersionString`:
+	err = encoder.Encode(obj.VersionString)
+	if err != nil {
+		return errors.NewField("VersionString", err)
+	}
+	return nil
+}
+
+func (obj ProgramVersionUpdatedEvent) Marshal() ([]byte, error) {
+	buf := bytes.NewBuffer(nil)
+	encoder := binary.NewBorshEncoder(buf)
+	err := obj.MarshalWithEncoder(encoder)
+	if err != nil {
+		return nil, fmt.Errorf("error while encoding ProgramVersionUpdatedEvent: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (obj *ProgramVersionUpdatedEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
+	// Deserialize `VersionString`:
+	err = decoder.Decode(&obj.VersionString)
+	if err != nil {
+		return errors.NewField("VersionString", err)
+	}
+	return nil
+}
+
+func (obj *ProgramVersionUpdatedEvent) Unmarshal(buf []byte) error {
+	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	if err != nil {
+		return fmt.Errorf("error while unmarshaling ProgramVersionUpdatedEvent: %w", err)
+	}
+	return nil
+}
+
+func UnmarshalProgramVersionUpdatedEvent(buf []byte) (*ProgramVersionUpdatedEvent, error) {
+	obj := new(ProgramVersionUpdatedEvent)
+	err := obj.Unmarshal(buf)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
 type TokenIdGuard struct {
 	// The mint assigned to this token_id.
 	// Stored for auditability — lets you trace token_id → mint on-chain.

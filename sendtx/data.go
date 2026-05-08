@@ -119,6 +119,12 @@ type UpdateFeeConfigDto struct {
 	NewRelayerAddress  string
 }
 
+type UpdateProgramVersionDto struct {
+	ProgramID     solana.PublicKey
+	AuthorityAddr string
+	VersionString string
+}
+
 type SOLTransferDto struct {
 	SenderPublicKey   string
 	ReceiverPublicKey string

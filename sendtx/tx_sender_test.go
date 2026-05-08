@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -20,7 +19,7 @@ import (
 
 func TestNewTxSender(t *testing.T) {
 	ctx := context.Background()
-	mockProvider := new(MockTxSubmiter)
+	mockProvider := new(wallet.MockTxProvider)
 
 	senderPrivateKey, err := solana.NewRandomPrivateKey()
 	require.NoError(t, err)
@@ -82,7 +81,7 @@ func TestBridgingRequest(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -138,7 +137,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("requires bridge program ID", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -180,7 +179,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid treasury address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		tokenMint := solana.NewWallet().PublicKey().String()
 
@@ -221,7 +220,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid bridging fee address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		tokenMint := solana.NewWallet().PublicKey().String()
 
@@ -260,8 +259,9 @@ func TestBridgingRequest(t *testing.T) {
 		require.Nil(t, sig)
 	})
 
+	//nolint:dupl
 	t.Run("insuficient bridging amount", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -303,8 +303,9 @@ func TestBridgingRequest(t *testing.T) {
 		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
+	//nolint:dupl
 	t.Run("insuficient bridging fee", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -347,7 +348,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("insuficient operation fee", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -392,7 +393,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -429,7 +430,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -466,7 +467,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("invalid token mint in receiver", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
@@ -505,7 +506,7 @@ func TestBridgingRequest(t *testing.T) {
 	})
 
 	t.Run("provider error on SendTx", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
@@ -584,7 +585,7 @@ func TestBridgingTransaction(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		receiverPubKey := solana.NewWallet().PublicKey()
 		tokenMint := solana.NewWallet().PublicKey().String()
 
@@ -649,7 +650,7 @@ func TestBridgingTransaction(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -687,7 +688,7 @@ func TestBridgingTransaction(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -724,7 +725,7 @@ func TestBridgingTransaction(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -778,7 +779,7 @@ func TestBridgeVSU(t *testing.T) {
 
 	//nolint:dupl
 	t.Run("success with adding validators", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 
@@ -827,7 +828,7 @@ func TestBridgeVSU(t *testing.T) {
 
 	//nolint:dupl
 	t.Run("success with removing validators", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 
@@ -875,7 +876,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("success with both adding and removing", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 		validator3 := solana.NewWallet().PublicKey().String()
@@ -925,7 +926,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -964,7 +965,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -994,7 +995,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid adding validator address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1024,7 +1025,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("invalid removing validator address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1054,7 +1055,7 @@ func TestBridgeVSU(t *testing.T) {
 	})
 
 	t.Run("empty both adding and removing", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		expectedSig = mustSignedSignature(t, []byte("bridge-vsu-provider-success"), senderPrivateKey)
 
@@ -1114,7 +1115,7 @@ func TestHotWalletIncrement(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := HotWalletIncrementDto{
@@ -1161,7 +1162,7 @@ func TestHotWalletIncrement(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1190,7 +1191,7 @@ func TestHotWalletIncrement(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1220,7 +1221,7 @@ func TestHotWalletIncrement(t *testing.T) {
 	})
 
 	t.Run("invalid token mint", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1250,7 +1251,7 @@ func TestHotWalletIncrement(t *testing.T) {
 	})
 
 	t.Run("zero amount", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1297,7 +1298,7 @@ func TestInitialize(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success with 4 validators", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		validator1 := solana.NewWallet().PublicKey().String()
 		validator2 := solana.NewWallet().PublicKey().String()
 		validator3 := solana.NewWallet().PublicKey().String()
@@ -1346,7 +1347,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("success with 10 validators", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		validators := make([]string, 10)
 
 		for i := 0; i < 10; i++ {
@@ -1396,7 +1397,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("success with empty validators list", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txDto := InitializeDto{
 			ProgramID:     skyline_program.ProgramID,
 			AuthorityAddr: senderPrivateKey.PublicKey().String(),
@@ -1440,7 +1441,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1479,7 +1480,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1509,7 +1510,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("invalid validator address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -1541,7 +1542,7 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("duplicate validators", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 		validator := solana.NewWallet().PublicKey().String()
 
 		txDto := InitializeDto{
@@ -1604,7 +1605,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txDto := RegisterTokenLockUnlockDto{
 			ProgramID:         skyline_program.ProgramID,
@@ -1651,7 +1652,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1683,7 +1684,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid authority address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1715,7 +1716,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid token mint address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1747,7 +1748,7 @@ func TestRegisterTokenLockUnlock(t *testing.T) {
 	})
 
 	t.Run("invalid token mint public key", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1797,7 +1798,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		newTreasury := solana.NewWallet().PublicKey().String()
 		newRelayer := solana.NewWallet().PublicKey().String()
@@ -1851,7 +1852,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1883,7 +1884,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid authority address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1914,7 +1915,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid new treasury address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1948,7 +1949,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 
 	t.Run("invalid new relayer address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -1982,6 +1983,129 @@ func TestUpdateFeeConfig(t *testing.T) {
 	})
 }
 
+func TestUpdateProgramVersion(t *testing.T) {
+	ctx := context.Background()
+
+	senderPrivateKey, err := solana.NewRandomPrivateKey()
+	require.NoError(t, err)
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	recentBlockHash := solana.Hash{}
+
+	expectedSig := solana.Signature{}
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(wallet.MockTxProvider)
+
+		txDto := UpdateProgramVersionDto{
+			ProgramID:     skyline_program.ProgramID,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			VersionString: "1.2.3",
+		}
+
+		expectedSig = mustSignedSignature(t, []byte("update-program-version-success"), senderPrivateKey)
+
+		mockProvider.On("SendTransaction",
+			mock.Anything,
+			mock.AnythingOfType("*solana.Transaction"),
+		).Return(expectedSig, nil)
+
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		tx, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeUpdateProgramVersion,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.NoError(t, err)
+		require.NotNil(t, tx)
+
+		sig, err := txSender.SendTx(
+			ctx,
+			tx,
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, &expectedSig, sig)
+		mockProvider.AssertExpectations(t)
+	})
+
+	t.Run("invalid DTO type", func(t *testing.T) {
+		mockProvider := new(wallet.MockTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		txDto := InitializeDto{
+			ProgramID:     skyline_program.ProgramID,
+			AuthorityAddr: senderPrivateKey.PublicKey().String(),
+			Validators:    []string{solana.NewWallet().PublicKey().String()},
+			LastID:        0,
+		}
+
+		_, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeUpdateProgramVersion,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected UpdateProgramVersionDto")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+
+	t.Run("invalid authority address", func(t *testing.T) {
+		mockProvider := new(wallet.MockTxProvider)
+
+		txSender := NewTxSender(
+			mockProvider,
+			&ChainConfig{
+				TreasuryAddress:    treasuryWallet.PublicKey,
+				BridgingFeeAddress: feeWallet.PublicKey,
+			},
+		)
+
+		txDto := UpdateProgramVersionDto{
+			ProgramID:     skyline_program.ProgramID,
+			AuthorityAddr: "invalid-address",
+			VersionString: "1.0.0",
+		}
+
+		_, err := txSender.CreateTx(
+			ctx,
+			senderPrivateKey.PublicKey(),
+			InstructionTypeUpdateProgramVersion,
+			recentBlockHash,
+			txDto,
+		)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid authority address")
+		mockProvider.AssertNotCalled(t, "SendTransaction")
+	})
+}
+
 func TestSOLTransfer(t *testing.T) {
 	ctx := context.Background()
 
@@ -1999,7 +2123,7 @@ func TestSOLTransfer(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		receiverWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -2047,7 +2171,7 @@ func TestSOLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2078,7 +2202,7 @@ func TestSOLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2111,7 +2235,7 @@ func TestSOLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2158,7 +2282,7 @@ func TestSPLTransfer(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -2212,7 +2336,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2243,7 +2367,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2280,7 +2404,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2317,7 +2441,7 @@ func TestSPLTransfer(t *testing.T) {
 	})
 
 	t.Run("invalid mint address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2371,7 +2495,7 @@ func TestCreateInstruction(t *testing.T) {
 	expectedSig := solana.Signature{}
 
 	t.Run("success", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		senderWallet, err := wallet.NewWallet()
 		require.NoError(t, err)
@@ -2423,7 +2547,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid DTO type", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2454,7 +2578,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid sender address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2489,7 +2613,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid receiver address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2524,7 +2648,7 @@ func TestCreateInstruction(t *testing.T) {
 	})
 
 	t.Run("invalid mint address", func(t *testing.T) {
-		mockProvider := new(MockTxSubmiter)
+		mockProvider := new(wallet.MockTxProvider)
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -2559,22 +2683,48 @@ func TestCreateInstruction(t *testing.T) {
 	})
 }
 
-type MockTxSubmiter struct {
-	mock.Mock
-}
+func TestTxSender_GetProgramConfig(t *testing.T) {
+	ctx := context.Background()
 
-var _ wallet.ITxSubmiter = (*MockTxSubmiter)(nil)
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
 
-func (m *MockTxSubmiter) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
-	args := m.Called(ctx, tx)
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
 
-	return args.Get(0).(solana.Signature), args.Error(1)
-}
+	chainConfig := &ChainConfig{
+		TreasuryAddress:    treasuryWallet.PublicKey,
+		BridgingFeeAddress: feeWallet.PublicKey,
+	}
 
-func (m *MockTxSubmiter) WaitForSignature(ctx context.Context, sig solana.Signature, commitment rpc.CommitmentType, maxWaitTime time.Duration) error {
-	args := m.Called(ctx, sig, commitment, maxWaitTime)
+	programID := skyline_program.ProgramID
+	pda, _, err := solana.FindProgramAddress([][]byte{skyline_program.PROGRAM_CONFIG_SEED}, programID)
+	require.NoError(t, err)
 
-	return args.Error(0)
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(wallet.MockTxProvider)
+
+		auth := solana.NewWallet().PublicKey()
+		cfgwant := skyline_program.ProgramConfig{
+			VersionString: "1.23.45",
+			DeployedAt:    42,
+			Authority:     auth,
+		}
+		body, err := cfgwant.Marshal()
+		require.NoError(t, err)
+
+		raw := append(append([]byte(nil), skyline_program.Account_ProgramConfig[:]...), body...)
+
+		mockProvider.On("GetAccountInfo", mock.Anything, pda).Return(&rpc.GetAccountInfoResult{
+			Value: &rpc.Account{Data: rpc.DataBytesOrJSONFromBytes(raw)},
+		}, nil).Once()
+
+		txSender := NewTxSender(mockProvider, chainConfig)
+		got, err := txSender.GetProgramConfig(ctx, programID)
+		require.NoError(t, err)
+		require.Equal(t, cfgwant.DeployedAt, got.DeployedAt)
+		require.Equal(t, cfgwant.Authority, got.Authority)
+	})
 }
 
 func mustSignedSignature(t *testing.T, payload []byte, signer solana.PrivateKey) solana.Signature {

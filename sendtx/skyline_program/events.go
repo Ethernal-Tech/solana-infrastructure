@@ -50,6 +50,13 @@ func ParseAnyEvent(eventData []byte) (any, error) {
 			return nil, fmt.Errorf("failed to unmarshal event as MintBurnTokenRegisteredEvent: %w", err)
 		}
 		return value, nil
+	case Event_ProgramVersionUpdatedEvent:
+		value := new(ProgramVersionUpdatedEvent)
+		err := value.UnmarshalWithDecoder(decoder)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event as ProgramVersionUpdatedEvent: %w", err)
+		}
+		return value, nil
 	case Event_TransactionExecutedEvent:
 		value := new(TransactionExecutedEvent)
 		err := value.UnmarshalWithDecoder(decoder)
@@ -150,6 +157,23 @@ func ParseEvent_MintBurnTokenRegisteredEvent(eventData []byte) (*MintBurnTokenRe
 	err = event.UnmarshalWithDecoder(decoder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal event of type MintBurnTokenRegisteredEvent: %w", err)
+	}
+	return event, nil
+}
+
+func ParseEvent_ProgramVersionUpdatedEvent(eventData []byte) (*ProgramVersionUpdatedEvent, error) {
+	decoder := binary.NewBorshDecoder(eventData)
+	discriminator, err := decoder.ReadDiscriminator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek discriminator: %w", err)
+	}
+	if discriminator != Event_ProgramVersionUpdatedEvent {
+		return nil, fmt.Errorf("expected discriminator %v, got %s", Event_ProgramVersionUpdatedEvent, binary.FormatDiscriminator(discriminator))
+	}
+	event := new(ProgramVersionUpdatedEvent)
+	err = event.UnmarshalWithDecoder(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal event of type ProgramVersionUpdatedEvent: %w", err)
 	}
 	return event, nil
 }

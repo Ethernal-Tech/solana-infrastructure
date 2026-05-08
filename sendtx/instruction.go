@@ -24,6 +24,7 @@ const (
 	InstructionTypeRegisterTokensLockUnlock InstructionType = "register_tokens_lock_unlock"
 	InstructionTypeRegisterTokensMintBurn   InstructionType = "register_tokens_mint_burn"
 	InstructionTypeUpdateFeeConfig          InstructionType = "update_fee_config"
+	InstructionTypeUpdateProgramVersion     InstructionType = "update_program_version"
 )
 
 type InstructionConfig struct {
@@ -32,6 +33,7 @@ type InstructionConfig struct {
 	validatorSetPDA  solana.PublicKey
 	vaultPDA         solana.PublicKey
 	feeConfigPDA     solana.PublicKey
+	programConfigPDA solana.PublicKey
 	tokenRegistryPDA solana.PublicKey
 	tokenIDGuardPDA  solana.PublicKey
 	metadataPDA      solana.PublicKey
@@ -105,6 +107,19 @@ func WithVaultPDA() InstructionConfigOption {
 		}
 
 		c.vaultPDA = *vaultPDA
+
+		return nil
+	}
+}
+
+func WithProgramConfigPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		programConfigPDA, err := c.derivePDA(skyline_program.PROGRAM_CONFIG_SEED)
+		if err != nil {
+			return fmt.Errorf("failed to derive program config PDA: %w", err)
+		}
+
+		c.programConfigPDA = *programConfigPDA
 
 		return nil
 	}

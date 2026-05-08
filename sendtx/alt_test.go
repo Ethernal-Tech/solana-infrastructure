@@ -11,7 +11,7 @@ import (
 
 func TestBridgeTransactionALTAddresses_NoMints(t *testing.T) {
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{},
 	)
 
@@ -37,7 +37,7 @@ func TestBridgeTransactionALTAddresses_NoMints(t *testing.T) {
 
 func TestBridgeTransactionALTAddresses_WithMints(t *testing.T) {
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{},
 	)
 
@@ -73,7 +73,7 @@ func TestBridgeTransactionALTAddresses_WithMints(t *testing.T) {
 
 func TestBridgeTransactionALTAddresses_ExcludesSenderAndReceiver(t *testing.T) {
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{},
 	)
 
@@ -100,7 +100,7 @@ func TestBridgeTransactionALTAddresses_ExcludesSenderAndReceiver(t *testing.T) {
 
 func TestBridgeTransactionALTAddresses_RejectsZeroMint(t *testing.T) {
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{},
 	)
 
@@ -115,7 +115,7 @@ func TestBridgeTransactionALTAddresses_RejectsZeroMint(t *testing.T) {
 // missing entries.
 func TestBridgeTransactionALTAddresses_RoundTripExtend(t *testing.T) {
 	txSender := NewTxSender(
-		new(MockTxSubmiter),
+		new(wallet.MockTxProvider),
 		&ChainConfig{},
 	)
 
