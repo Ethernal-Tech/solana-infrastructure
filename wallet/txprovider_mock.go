@@ -45,6 +45,17 @@ func (m *MockTxProvider) GetAccountInfo(
 	return result, args.Error(1)
 }
 
+func (m *MockTxProvider) GetProgramAccounts(
+	ctx context.Context,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	args := m.Called(ctx, programID, opts)
+	result, _ := args.Get(0).(rpc.GetProgramAccountsResult)
+
+	return result, args.Error(1)
+}
+
 // ─── IChainDataRetriever ──────────────────────────────────────────────────────
 
 func (m *MockTxProvider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) {
@@ -157,6 +168,17 @@ func (m *MockUserDataRetriever) GetAccountInfo(
 ) (*rpc.GetAccountInfoResult, error) {
 	args := m.Called(ctx, pubkey)
 	result, _ := args.Get(0).(*rpc.GetAccountInfoResult)
+
+	return result, args.Error(1)
+}
+
+func (m *MockUserDataRetriever) GetProgramAccounts(
+	ctx context.Context,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	args := m.Called(ctx, programID, opts)
+	result, _ := args.Get(0).(rpc.GetProgramAccountsResult)
 
 	return result, args.Error(1)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math/big"
 
 	infracommon "github.com/Ethernal-Tech/cardano-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -13,6 +12,7 @@ import (
 	associatedtokenaccount "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
+	"github.com/gagliardetto/solana-go/rpc"
 )
 
 type TxSender struct {
@@ -270,7 +270,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	}
 
 	for _, receiver := range tx.Receivers {
-		if receiver.TokenAmount.Amount.Cmp(new(big.Int).SetUint64(txSnd.chainConfig.MinAmountToBridge)) == -1 {
+		if receiver.TokenAmount.Amount < txSnd.chainConfig.MinAmountToBridge {
 			return nil, fmt.Errorf("amount to bridge is less than the minimum required: %d", txSnd.chainConfig.MinAmountToBridge)
 		}
 	}
@@ -297,24 +297,26 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	// for now, we only support txs with one receiver
 	receiver := tx.Receivers[0]
 
-	tokenMintPublicKey, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse token mint address: %s: %w", receiver.TokenAmount.TokenMint, err)
-	}
-
-	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
-	if err != nil {
-		return nil, fmt.Errorf("receiver has an invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
-	}
-
 	if err = txSnd.instructionConfig.ApplyOptions(
 		WithProgramID(programID),
 		WithValidatorSetPDA(),
 		WithVaultPDA(),
-		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithTokenRegistryPDA(receiver.TokenAmount.TokenID),
 		WithFeeConfigPDA(),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	registeredTokens, err := txSnd.GetAllRegisteredTokens(tx.Ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all registered tokens: %w", err)
+	}
+
+	tokenMintPublicKey := registeredTokens[receiver.TokenAmount.TokenID].Mint
+
+	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
+	if err != nil {
+		return nil, fmt.Errorf("receiver has an invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
 	}
 
 	senderAta, _, err := wallet.FindAssociatedTokenAddress(senderPubKey, tokenMintPublicKey)
@@ -330,7 +332,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 	}
 
 	bridgeRequestIx, err := skyline_program.NewBridgeRequestInstruction(
-		receiver.TokenAmount.Amount.Uint64(),
+		receiver.TokenAmount.Amount,
 		receiver.Address,
 		tx.DstChainID,
 		tx.BridgingFee+tx.OperationFee,
@@ -346,7 +348,6 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
 		txSnd.instructionConfig.feeConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
-		txSnd.chainConfig.BridgingFeeAddress,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge request instruction: %w", err)
@@ -366,42 +367,6 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("invalid sender address: %s: %w", tx.SenderAddr, err)
 	}
 
-	mintIndex := make(map[solana.PublicKey]uint8)
-
-	var mints []solana.PublicKey
-
-	transferItems := make([]skyline_program.TransferItem, 0, len(tx.Receivers))
-
-	for _, receiver := range tx.Receivers {
-		if err := wallet.ValidateAddress(receiver.Address, false); err != nil {
-			return nil, fmt.Errorf("invalid receiver address: %s: %w", receiver.Address, err)
-		}
-
-		receiverPubKey, err := wallet.PublicKeyFromAddress(receiver.Address)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse receiver public key from address %s: %w", receiverPubKey.String(), err)
-		}
-
-		mint, err := wallet.PublicKeyFromAddress(receiver.TokenAmount.TokenMint)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse token mint address: %s: %w", receiver.TokenAmount.TokenMint, err)
-		}
-
-		idx, exists := mintIndex[mint]
-		if !exists {
-			idx = uint8(len(mints)) //nolint:gosec // number of mints is bounded by protocol
-			mintIndex[mint] = idx
-
-			mints = append(mints, mint)
-		}
-
-		transferItems = append(transferItems, skyline_program.TransferItem{
-			Recipient: receiverPubKey,
-			MintIndex: idx,
-			Amount:    receiver.TokenAmount.Amount.Uint64(),
-		})
-	}
-
 	senderPubKey, err := wallet.PublicKeyFromAddress(tx.SenderAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse sender public key from address %s: %w", tx.SenderAddr, err)
@@ -415,10 +380,20 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
 
+	registeredTokens, err := txSnd.GetAllRegisteredTokens(tx.Ctx, programID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all registered tokens: %w", err)
+	}
+
+	// Mints and transfers must mirror the dedup/index assignment used on-chain
+	// (see `derive_bridge_data` in bridge_transaction.rs) so `remaining_accounts`
+	// lines up with what the program derives from the validator-signed payload.
+	mints, tokenIDs, transferItems, err := deriveBridgeMintsAndTransfers(tx.Receivers, registeredTokens)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive bridge mints/transfers: %w", err)
+	}
+
 	bridgeTxIx, err := skyline_program.NewBridgeTransactionInstruction(
-		transferItems,
-		mints,
-		tx.BatchID,
 		senderPubKey,
 		txSnd.instructionConfig.validatorSetPDA,
 		txSnd.instructionConfig.vaultPDA,
@@ -431,7 +406,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to build bridge transaction instruction: %w", err)
 	}
 
-	remainingAccounts, err := txSnd.bridgeTransactionRemainingAccounts(programID, mints, transferItems)
+	remainingAccounts, err := txSnd.bridgeTransactionRemainingAccounts(programID, mints, tokenIDs, transferItems)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge transaction remaining accounts: %w", err)
 	}
@@ -450,6 +425,50 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 	}
 
 	return []solana.Instruction{batchedEd25519Ix, bridgeTxIxFinal}, nil
+}
+
+// deriveBridgeMintsAndTransfers builds the dedup'd mint list and per-receiver
+// transfer items in the same first-seen order the on-chain program assigns
+// `mint_index` values, so account ordering stays consistent.
+func deriveBridgeMintsAndTransfers(
+	receivers []PayloadReceiver,
+	registeredTokens map[uint16]skyline_program.TokenRegistry,
+) ([]solana.PublicKey, []uint16, []TransferItem, error) {
+	mintIndex := make(map[solana.PublicKey]uint8)
+
+	var (
+		mints    []solana.PublicKey
+		tokenIDs []uint16
+	)
+
+	transferItems := make([]TransferItem, 0, len(receivers))
+
+	for _, receiver := range receivers {
+		receiverAddr := solana.PublicKeyFromBytes(receiver.Address[:])
+
+		if err := wallet.ValidateAddress(receiverAddr.String(), false); err != nil {
+			return nil, nil, nil, fmt.Errorf("invalid receiver address: %s: %w", receiver.Address, err)
+		}
+
+		mint := registeredTokens[receiver.TokenAmount.TokenID].Mint
+
+		idx, exists := mintIndex[mint]
+		if !exists {
+			idx = uint8(len(mints)) //nolint:gosec // bounded by protocol
+			mintIndex[mint] = idx
+
+			mints = append(mints, mint)
+			tokenIDs = append(tokenIDs, receiver.TokenAmount.TokenID)
+		}
+
+		transferItems = append(transferItems, TransferItem{
+			Recipient: receiverAddr,
+			MintIndex: idx,
+			Amount:    receiver.TokenAmount.Amount,
+		})
+	}
+
+	return mints, tokenIDs, transferItems, nil
 }
 
 func withProgramID(instruction solana.Instruction, programID solana.PublicKey) (solana.Instruction, error) {
@@ -472,8 +491,13 @@ func requireBridgeProgramID(programID solana.PublicKey) error {
 func (txSnd *TxSender) bridgeTransactionRemainingAccounts(
 	programID solana.PublicKey,
 	mints []solana.PublicKey,
-	transfers []skyline_program.TransferItem,
+	tokenIDs []uint16,
+	transfers []TransferItem,
 ) ([]*solana.AccountMeta, error) {
+	if len(tokenIDs) != len(mints) {
+		return nil, fmt.Errorf("token ID count %d does not match mint count %d", len(tokenIDs), len(mints))
+	}
+
 	nMint, nXfer := len(mints), len(transfers)
 	out := make([]*solana.AccountMeta, 0, nMint*3+nXfer*2)
 
@@ -485,8 +509,11 @@ func (txSnd *TxSender) bridgeTransactionRemainingAccounts(
 		out = append(out, solana.NewAccountMeta(tr.Recipient, false, false))
 	}
 
-	for _, m := range mints {
-		reg, _, err := solana.FindProgramAddress([][]byte{skyline_program.TOKEN_REGISTRY_SEED, m[:]},
+	for i := range mints {
+		tokenIDBytes := make([]byte, 2)
+		binary.LittleEndian.PutUint16(tokenIDBytes, tokenIDs[i])
+
+		reg, _, err := solana.FindProgramAddress([][]byte{skyline_program.TOKEN_REGISTRY_SEED, tokenIDBytes},
 			programID)
 		if err != nil {
 			return nil, err
@@ -708,15 +735,17 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 		return nil, fmt.Errorf("failed to parse token mint address: %s: %w", tx.TokenMint, err)
 	}
 
-	err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
-	if err != nil {
-		return nil, fmt.Errorf("invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
+	if tokenMintPublicKey != skyline_program.NATIVE_SOL_MINT {
+		err = wallet.ValidatePublicKey(tokenMintPublicKey, true)
+		if err != nil {
+			return nil, fmt.Errorf("invalid token mint specified: %s: %w", tokenMintPublicKey.String(), err)
+		}
 	}
 
 	if err = txSnd.instructionConfig.ApplyOptions(
 		WithProgramID(programID),
 		WithVaultPDA(),
-		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithTokenRegistryPDA(tx.TokenID),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
@@ -788,6 +817,65 @@ func (txSnd *TxSender) GetProgramConfig(
 	return cfg, nil
 }
 
+// GetAllRegisteredTokens loads all TokenRegistry accounts for the bridge program.
+// The tx provider must implement GetProgramAccounts (e.g. wallet.Provider).
+func (txSnd *TxSender) GetAllRegisteredTokens(
+	ctx context.Context,
+	programID solana.PublicKey,
+) (map[uint16]skyline_program.TokenRegistry, error) {
+	if err := requireBridgeProgramID(programID); err != nil {
+		return nil, err
+	}
+
+	filters := []rpc.RPCFilter{
+		{
+			Memcmp: &rpc.RPCFilterMemcmp{
+				Offset: 0,
+				Bytes:  solana.Base58(skyline_program.Account_TokenRegistry[:]),
+			},
+		},
+	}
+
+	accounts, err := txSnd.txProvider.GetProgramAccounts(
+		ctx,
+		programID,
+		&rpc.GetProgramAccountsOpts{
+			Commitment: rpc.CommitmentConfirmed,
+			Encoding:   solana.EncodingBase64,
+			Filters:    filters,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get token registry accounts: %w", err)
+	}
+
+	registeredTokens := make(map[uint16]skyline_program.TokenRegistry, len(accounts))
+
+	for _, account := range accounts {
+		if account == nil {
+			return nil, fmt.Errorf("token registry account entry is nil")
+		}
+
+		if account.Account == nil || account.Account.Data == nil {
+			return nil, fmt.Errorf("token registry account %s has empty data", account.Pubkey.String())
+		}
+
+		raw := account.Account.Data.GetBinary()
+		if len(raw) == 0 {
+			return nil, fmt.Errorf("token registry account %s has empty data", account.Pubkey.String())
+		}
+
+		registry, err := skyline_program.ParseAccount_TokenRegistry(raw)
+		if err != nil {
+			return nil, fmt.Errorf("decode token registry %s: %w", account.Pubkey.String(), err)
+		}
+
+		registeredTokens[registry.TokenId] = *registry
+	}
+
+	return registeredTokens, nil
+}
+
 func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Instruction, error) {
 	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
 		return nil, err
@@ -840,7 +928,6 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		txSnd.instructionConfig.feeConfigPDA,
 		txSnd.instructionConfig.programConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
-		txSnd.chainConfig.BridgingFeeAddress,
 		txSnd.instructionConfig.systemProgramID,
 	)
 	if err != nil {
@@ -880,7 +967,7 @@ func (txSnd *TxSender) buildRegisterTokenLockUnlockInstruction(
 	if err = txSnd.instructionConfig.ApplyOptions(
 		WithProgramID(programID),
 		WithFeeConfigPDA(),
-		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithTokenRegistryPDA(tx.TokenID),
 		WithTokenIDGuardPDA(tx.TokenID),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
@@ -934,7 +1021,7 @@ func (txSnd *TxSender) buildRegisterTokenMintBurnInstruction(tx RegisterTokenMin
 		WithFeeConfigPDA(),
 		WithVaultPDA(),
 		WithMetadataPDA(tokenMintPublicKey),
-		WithTokenRegistryPDA(tokenMintPublicKey),
+		WithTokenRegistryPDA(tx.TokenID),
 		WithTokenIDGuardPDA(tx.TokenID),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
@@ -982,7 +1069,7 @@ func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (s
 		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
 	}
 
-	newTreasuryAcc, newRelayerAcc := solana.PublicKey{}, solana.PublicKey{}
+	newTreasuryAcc := solana.PublicKey{}
 
 	if tx.UpdateTreasury && tx.NewTreasuryAddress != "" {
 		if err := wallet.ValidateAddress(tx.NewTreasuryAddress, true); err != nil {
@@ -992,17 +1079,6 @@ func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (s
 		newTreasuryAcc, err = wallet.PublicKeyFromAddress(tx.NewTreasuryAddress)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse new treasury public key from address %s: %w", tx.NewTreasuryAddress, err)
-		}
-	}
-
-	if tx.UpdateRelayer && tx.NewRelayerAddress != "" {
-		if err := wallet.ValidateAddress(tx.NewRelayerAddress, true); err != nil {
-			return nil, fmt.Errorf("invalid new relayer address: %s: %w", tx.NewRelayerAddress, err)
-		}
-
-		newRelayerAcc, err = wallet.PublicKeyFromAddress(tx.NewRelayerAddress)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse new relayer public key from address %s: %w", tx.NewRelayerAddress, err)
 		}
 	}
 
@@ -1017,11 +1093,9 @@ func (txSnd *TxSender) buildUpdateFeeConfigInstruction(tx UpdateFeeConfigDto) (s
 		&tx.MinOperationFee,
 		&tx.BridgingFee,
 		&tx.UpdateTreasury,
-		&tx.UpdateRelayer,
 		authorityPubKey,
 		txSnd.instructionConfig.feeConfigPDA,
 		newTreasuryAcc,
-		newRelayerAcc,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build update fee config instruction: %w", err)

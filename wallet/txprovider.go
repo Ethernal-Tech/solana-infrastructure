@@ -21,6 +21,11 @@ type IUserDataRetriever interface {
 	GetBalance(ctx context.Context, pubKey solana.PublicKey) (uint64, error)
 	GetTokenAccountBalance(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetTokenAccountBalanceResult, error)
 	GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error)
+	GetProgramAccounts(
+		ctx context.Context,
+		programID solana.PublicKey,
+		opts *rpc.GetProgramAccountsOpts,
+	) (rpc.GetProgramAccountsResult, error)
 }
 
 type IChainDataRetriever interface {
@@ -91,6 +96,14 @@ func (p *Provider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) 
 			Commitment: rpc.CommitmentConfirmed,
 		},
 	)
+}
+
+func (p *Provider) GetProgramAccounts(
+	ctx context.Context,
+	programID solana.PublicKey,
+	opts *rpc.GetProgramAccountsOpts,
+) (rpc.GetProgramAccountsResult, error) {
+	return p.rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
 }
 
 func (p *Provider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) {

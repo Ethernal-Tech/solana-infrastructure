@@ -1,6 +1,7 @@
 package sendtx
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -41,9 +42,9 @@ func TestBridgeTransactionALTAddresses_WithMints(t *testing.T) {
 		&ChainConfig{},
 	)
 
-	mints := []solana.PublicKey{
-		solana.NewWallet().PublicKey(),
-		solana.NewWallet().PublicKey(),
+	mints := map[uint16]solana.PublicKey{
+		1: solana.NewWallet().PublicKey(),
+		2: solana.NewWallet().PublicKey(),
 	}
 
 	got, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, mints)
@@ -55,20 +56,75 @@ func TestBridgeTransactionALTAddresses_WithMints(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, vaultPDA, got[1])
 
-	for i, mint := range mints {
+	for i, tokenID := range []uint16{1, 2} {
+		mint := mints[tokenID]
 		base := 6 + i*3
 
+		tokenIDBytes := make([]byte, 2)
+		binary.LittleEndian.PutUint16(tokenIDBytes, tokenID)
+
 		expectedRegistry, _, err := solana.FindProgramAddress(
-			[][]byte{skyline_program.TOKEN_REGISTRY_SEED, mint[:]}, skyline_program.ProgramID)
+			[][]byte{skyline_program.TOKEN_REGISTRY_SEED, tokenIDBytes}, skyline_program.ProgramID)
 		require.NoError(t, err)
 
 		expectedVaultATA, _, err := wallet.FindAssociatedTokenAddress(vaultPDA, mint)
 		require.NoError(t, err)
 
-		require.Equal(t, mint, got[base], "mint order must match input order")
+		require.Equal(t, mint, got[base], "mint order must follow token ID order")
 		require.Equal(t, expectedRegistry, got[base+1])
 		require.Equal(t, expectedVaultATA, got[base+2])
 	}
+}
+
+func TestBridgeTransactionALTAddresses_SortsMapByTokenID(t *testing.T) {
+	txSender := NewTxSender(
+		new(wallet.MockTxProvider),
+		&ChainConfig{},
+	)
+
+	mint7 := solana.NewWallet().PublicKey()
+	mint42 := solana.NewWallet().PublicKey()
+	mint100 := solana.NewWallet().PublicKey()
+
+	got, err := txSender.BridgeTransactionALTAddresses(
+		skyline_program.ProgramID,
+		map[uint16]solana.PublicKey{
+			42:  mint42,
+			100: mint100,
+			7:   mint7,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, got, 15)
+
+	require.Equal(t, mint7, got[6])
+	require.Equal(t, mint42, got[9])
+	require.Equal(t, mint100, got[12])
+}
+
+func TestBridgeTransactionALTAddresses_RegistryUsesTokenIDNotMint(t *testing.T) {
+	txSender := NewTxSender(
+		new(wallet.MockTxProvider),
+		&ChainConfig{},
+	)
+
+	mint := solana.NewWallet().PublicKey()
+
+	got, err := txSender.BridgeTransactionALTAddresses(
+		skyline_program.ProgramID,
+		map[uint16]solana.PublicKey{
+			1: mint,
+			2: mint,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, got, 12)
+
+	require.Equal(t, mint, got[6])
+	require.Equal(t, expectedTokenRegistryPDA(t, 1), got[7])
+	require.Equal(t, mint, got[9])
+	require.Equal(t, expectedTokenRegistryPDA(t, 2), got[10])
+	require.NotEqual(t, got[7], got[10], "registry PDA must be keyed by token ID")
 }
 
 func TestBridgeTransactionALTAddresses_ExcludesSenderAndReceiver(t *testing.T) {
@@ -81,7 +137,7 @@ func TestBridgeTransactionALTAddresses_ExcludesSenderAndReceiver(t *testing.T) {
 	sender := solana.NewWallet().PublicKey()
 	receiver := solana.NewWallet().PublicKey()
 
-	got, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, []solana.PublicKey{mint})
+	got, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, map[uint16]solana.PublicKey{1: mint})
 	require.NoError(t, err)
 
 	receiverATA, _, err := wallet.FindAssociatedTokenAddress(receiver, mint)
@@ -98,15 +154,20 @@ func TestBridgeTransactionALTAddresses_ExcludesSenderAndReceiver(t *testing.T) {
 	}
 }
 
-func TestBridgeTransactionALTAddresses_RejectsZeroMint(t *testing.T) {
+func TestBridgeTransactionALTAddresses_SkipsNativeSolMint(t *testing.T) {
 	txSender := NewTxSender(
 		new(wallet.MockTxProvider),
 		&ChainConfig{},
 	)
 
-	_, err := txSender.BridgeTransactionALTAddresses(skyline_program.ProgramID, []solana.PublicKey{{}})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid mint")
+	got, err := txSender.BridgeTransactionALTAddresses(
+		skyline_program.ProgramID,
+		map[uint16]solana.PublicKey{
+			1: skyline_program.NATIVE_SOL_MINT,
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, got, 6, "native SOL does not need per-mint SPL accounts")
 }
 
 // TestBridgeTransactionALTAddresses_RoundTripExtend proves the common flow:
@@ -123,13 +184,13 @@ func TestBridgeTransactionALTAddresses_RoundTripExtend(t *testing.T) {
 	newMint := solana.NewWallet().PublicKey()
 
 	oldSet, err := txSender.BridgeTransactionALTAddresses(
-		skyline_program.ProgramID, []solana.PublicKey{oldMint})
+		skyline_program.ProgramID, map[uint16]solana.PublicKey{1: oldMint})
 	require.NoError(t, err)
 
 	require.Len(t, oldSet, 9)
 
 	fullSet, err := txSender.BridgeTransactionALTAddresses(
-		skyline_program.ProgramID, []solana.PublicKey{oldMint, newMint})
+		skyline_program.ProgramID, map[uint16]solana.PublicKey{1: oldMint, 2: newMint})
 	require.NoError(t, err)
 
 	require.Len(t, fullSet, 12)
@@ -150,4 +211,19 @@ func TestBridgeTransactionALTAddresses_RoundTripExtend(t *testing.T) {
 	require.Len(t, newOnly, 3,
 		"only the 3 per-mint keys for the newly added mint should be missing from oldSet")
 	require.Contains(t, newOnly, newMint)
+}
+
+func expectedTokenRegistryPDA(t *testing.T, tokenID uint16) solana.PublicKey {
+	t.Helper()
+
+	tokenIDBytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(tokenIDBytes, tokenID)
+
+	pda, _, err := solana.FindProgramAddress(
+		[][]byte{skyline_program.TOKEN_REGISTRY_SEED, tokenIDBytes},
+		skyline_program.ProgramID,
+	)
+	require.NoError(t, err)
+
+	return pda
 }

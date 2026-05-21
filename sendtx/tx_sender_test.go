@@ -3,13 +3,11 @@ package sendtx
 import (
 	"context"
 	"errors"
-	"math/big"
 	"testing"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
-	binary "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/stretchr/testify/mock"
@@ -82,7 +80,6 @@ func TestBridgingRequest(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
@@ -92,8 +89,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: tokenMint,
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -105,6 +102,8 @@ func TestBridgingRequest(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Transaction"),
 		).Return(expectedSig, nil)
+
+		mockBridgeTokenRegistry(t, mockProvider, defaultBridgeTokenRegistry(1))
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -138,7 +137,6 @@ func TestBridgingRequest(t *testing.T) {
 
 	t.Run("requires bridge program ID", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			SenderAddr: senderPrivateKey.PublicKey().String(),
@@ -147,8 +145,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: tokenMint,
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -181,8 +179,6 @@ func TestBridgingRequest(t *testing.T) {
 	t.Run("invalid treasury address", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
 
-		tokenMint := solana.NewWallet().PublicKey().String()
-
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
@@ -191,8 +187,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1_000_000_000),
-						TokenMint: tokenMint,
+						Amount:  1_000_000_000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -222,8 +218,6 @@ func TestBridgingRequest(t *testing.T) {
 	t.Run("invalid bridging fee address", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
 
-		tokenMint := solana.NewWallet().PublicKey().String()
-
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
 			SenderAddr: senderPrivateKey.PublicKey().String(),
@@ -232,8 +226,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1_000_000_000),
-						TokenMint: tokenMint,
+						Amount:  1_000_000_000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -259,10 +253,8 @@ func TestBridgingRequest(t *testing.T) {
 		require.Nil(t, sig)
 	})
 
-	//nolint:dupl
 	t.Run("insuficient bridging amount", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
@@ -272,8 +264,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1_000_000),
-						TokenMint: tokenMint,
+						Amount:  1_000_000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -303,10 +295,8 @@ func TestBridgingRequest(t *testing.T) {
 		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 
-	//nolint:dupl
 	t.Run("insuficient bridging fee", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
@@ -316,8 +306,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1_000_000_000),
-						TokenMint: tokenMint,
+						Amount:  1_000_000_000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -349,7 +339,6 @@ func TestBridgingRequest(t *testing.T) {
 
 	t.Run("insuficient operation fee", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
@@ -359,8 +348,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1_000_000_000),
-						TokenMint: tokenMint,
+						Amount:  1_000_000_000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -404,17 +393,11 @@ func TestBridgingRequest(t *testing.T) {
 
 		// Pass BridgeTransactionDto instead of BridgeRequestDto
 		txDto := BridgeTransactionDto{
-			ProgramID:  skyline_program.ProgramID,
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			BatchID:    42,
-			Receivers: []BridgingTxReceiver{
-				{
-					Address: "invalid-address",
-					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
-					},
-				},
+			ProgramID:    skyline_program.ProgramID,
+			SenderAddr:   senderPrivateKey.PublicKey().String(),
+			PayloadBytes: []byte{1, 2, 3, 4},
+			SignaturePairs: map[solana.PublicKey]solana.Signature{
+				solana.NewWallet().PublicKey(): {1, 2, 3},
 			},
 		}
 
@@ -447,8 +430,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -476,8 +459,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.PublicKey{}.String(), // Zero address - invalid
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -491,6 +474,8 @@ func TestBridgingRequest(t *testing.T) {
 				BridgingFeeAddress: feeWallet.PublicKey,
 			},
 		)
+
+		mockBridgeTokenRegistry(t, mockProvider)
 
 		_, err = txSender.CreateTx(
 			ctx,
@@ -507,7 +492,6 @@ func TestBridgingRequest(t *testing.T) {
 
 	t.Run("provider error on SendTx", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		txDto := BridgeRequestDto{
 			ProgramID:  skyline_program.ProgramID,
@@ -517,8 +501,8 @@ func TestBridgingRequest(t *testing.T) {
 				{
 					Address: "0x1234567890123456789012345678901234567890",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: tokenMint,
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -529,6 +513,8 @@ func TestBridgingRequest(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Transaction"),
 		).Return(solana.Signature{}, expectedErr)
+
+		mockBridgeTokenRegistry(t, mockProvider, defaultBridgeTokenRegistry(1))
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -586,8 +572,6 @@ func TestBridgingTransaction(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
-		receiverPubKey := solana.NewWallet().PublicKey()
-		tokenMint := solana.NewWallet().PublicKey().String()
 
 		bridgeSignerPubKey := solana.NewWallet().PublicKey()
 		payloadBytes := []byte{1, 2, 3, 4}
@@ -599,18 +583,8 @@ func TestBridgingTransaction(t *testing.T) {
 		txDto := BridgeTransactionDto{
 			ProgramID:      skyline_program.ProgramID,
 			SenderAddr:     senderPrivateKey.PublicKey().String(),
-			BatchID:        42,
 			PayloadBytes:   payloadBytes,
 			SignaturePairs: signaturePairs,
-			Receivers: []BridgingTxReceiver{
-				{
-					Address: receiverPubKey.String(),
-					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: tokenMint,
-					},
-				},
-			},
 		}
 
 		expectedSig = mustSignedSignature(t, []byte("bridge-transaction-success"), senderPrivateKey)
@@ -619,6 +593,8 @@ func TestBridgingTransaction(t *testing.T) {
 			mock.Anything,
 			mock.AnythingOfType("*solana.Transaction"),
 		).Return(expectedSig, nil)
+
+		mockBridgeTokenRegistry(t, mockProvider, defaultBridgeTokenRegistry(1))
 
 		txSender := NewTxSender(
 			mockProvider,
@@ -668,8 +644,8 @@ func TestBridgingTransaction(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -698,17 +674,11 @@ func TestBridgingTransaction(t *testing.T) {
 		)
 
 		txDto := BridgeTransactionDto{
-			ProgramID:  skyline_program.ProgramID,
-			SenderAddr: "invalid-address",
-			BatchID:    42,
-			Receivers: []BridgingTxReceiver{
-				{
-					Address: "0x1234567890123456789012345678901234567890",
-					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
-					},
-				},
+			ProgramID:    skyline_program.ProgramID,
+			SenderAddr:   "invalid-address",
+			PayloadBytes: []byte{1, 2, 3, 4},
+			SignaturePairs: map[solana.PublicKey]solana.Signature{
+				solana.NewWallet().PublicKey(): {1, 2, 3},
 			},
 		}
 
@@ -726,6 +696,8 @@ func TestBridgingTransaction(t *testing.T) {
 
 	t.Run("invalid receiver address", func(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
+		mockBridgeTokenRegistry(t, mockProvider, defaultBridgeTokenRegistry(1))
+
 		txSender := NewTxSender(
 			mockProvider,
 			&ChainConfig{
@@ -734,16 +706,25 @@ func TestBridgingTransaction(t *testing.T) {
 			},
 		)
 
+		offCurveReceiver, _, err := solana.FindProgramAddress(
+			[][]byte{[]byte("invalid-receiver")},
+			skyline_program.ProgramID,
+		)
+		require.NoError(t, err)
+
 		txDto := BridgeTransactionDto{
-			ProgramID:  skyline_program.ProgramID,
-			SenderAddr: senderPrivateKey.PublicKey().String(),
-			BatchID:    42,
-			Receivers: []BridgingTxReceiver{
+			ProgramID:    skyline_program.ProgramID,
+			SenderAddr:   senderPrivateKey.PublicKey().String(),
+			PayloadBytes: []byte{1, 2, 3, 4},
+			SignaturePairs: map[solana.PublicKey]solana.Signature{
+				solana.NewWallet().PublicKey(): {1, 2, 3},
+			},
+			Receivers: []PayloadReceiver{
 				{
-					Address: "invalid-address",
+					Address: offCurveReceiver,
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
+						TokenID: 1,
+						Amount:  1000,
 					},
 				},
 			},
@@ -944,8 +925,8 @@ func TestBridgeVSU(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -1459,8 +1440,8 @@ func TestInitialize(t *testing.T) {
 				{
 					Address: "0x1234",
 					TokenAmount: wallet.TokenAmount{
-						Amount:    new(big.Int).SetUint64(1000),
-						TokenMint: solana.NewWallet().PublicKey().String(),
+						Amount:  1000,
+						TokenID: 1,
 					},
 				},
 			},
@@ -1801,7 +1782,6 @@ func TestUpdateFeeConfig(t *testing.T) {
 		mockProvider := new(wallet.MockTxProvider)
 
 		newTreasury := solana.NewWallet().PublicKey().String()
-		newRelayer := solana.NewWallet().PublicKey().String()
 
 		txDto := UpdateFeeConfigDto{
 			ProgramID:       skyline_program.ProgramID,
@@ -1810,9 +1790,7 @@ func TestUpdateFeeConfig(t *testing.T) {
 			BridgingFee:     20,
 
 			UpdateTreasury:     true,
-			UpdateRelayer:      true,
 			NewTreasuryAddress: newTreasury,
-			NewRelayerAddress:  newRelayer,
 		}
 
 		expectedSig = mustSignedSignature(t, []byte("update-fee-config-success"), senderPrivateKey)
@@ -1945,40 +1923,6 @@ func TestUpdateFeeConfig(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid new treasury address")
-		mockProvider.AssertNotCalled(t, "SendTransaction")
-	})
-
-	t.Run("invalid new relayer address", func(t *testing.T) {
-		mockProvider := new(wallet.MockTxProvider)
-
-		txSender := NewTxSender(
-			mockProvider,
-			&ChainConfig{
-				TreasuryAddress:    treasuryWallet.PublicKey,
-				BridgingFeeAddress: feeWallet.PublicKey,
-			},
-		)
-
-		txDto := UpdateFeeConfigDto{
-			ProgramID:       skyline_program.ProgramID,
-			AuthorityAddr:   senderPrivateKey.PublicKey().String(),
-			MinOperationFee: 10,
-			BridgingFee:     20,
-
-			UpdateRelayer:     true,
-			NewRelayerAddress: "invalid-address",
-		}
-
-		_, err = txSender.CreateTx(
-			ctx,
-			senderPrivateKey.PublicKey(),
-			InstructionTypeUpdateFeeConfig,
-			recentBlockHash,
-			txDto,
-		)
-
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "invalid new relayer address")
 		mockProvider.AssertNotCalled(t, "SendTransaction")
 	})
 }
@@ -2727,6 +2671,82 @@ func TestTxSender_GetProgramConfig(t *testing.T) {
 	})
 }
 
+func TestTxSender_GetAllRegisteredTokens(t *testing.T) {
+	ctx := context.Background()
+
+	treasuryWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	feeWallet, err := wallet.NewWallet()
+	require.NoError(t, err)
+
+	chainConfig := &ChainConfig{
+		TreasuryAddress:    treasuryWallet.PublicKey,
+		BridgingFeeAddress: feeWallet.PublicKey,
+	}
+
+	programID := skyline_program.ProgramID
+
+	t.Run("success", func(t *testing.T) {
+		mockProvider := new(wallet.MockTxProvider)
+
+		first := skyline_program.TokenRegistry{
+			TokenId:           1,
+			Mint:              solana.NewWallet().PublicKey(),
+			IsLockUnlock:      true,
+			MinBridgingAmount: 10,
+			Bump:              250,
+		}
+		second := skyline_program.TokenRegistry{
+			TokenId:           2,
+			Mint:              solana.NewWallet().PublicKey(),
+			IsLockUnlock:      false,
+			MinBridgingAmount: 20,
+			Bump:              251,
+		}
+
+		firstBody, err := first.Marshal()
+		require.NoError(t, err)
+		secondBody, err := second.Marshal()
+		require.NoError(t, err)
+
+		firstRaw := append(append([]byte(nil), skyline_program.Account_TokenRegistry[:]...), firstBody...)
+		secondRaw := append(append([]byte(nil), skyline_program.Account_TokenRegistry[:]...), secondBody...)
+
+		mockProvider.On("GetProgramAccounts", mock.Anything, programID, mock.AnythingOfType("*rpc.GetProgramAccountsOpts")).
+			Return(rpc.GetProgramAccountsResult{
+				{
+					Pubkey:  solana.NewWallet().PublicKey(),
+					Account: &rpc.Account{Data: rpc.DataBytesOrJSONFromBytes(firstRaw)},
+				},
+				{
+					Pubkey:  solana.NewWallet().PublicKey(),
+					Account: &rpc.Account{Data: rpc.DataBytesOrJSONFromBytes(secondRaw)},
+				},
+			}, nil).Once()
+
+		txSender := NewTxSender(mockProvider, chainConfig)
+		got, err := txSender.GetAllRegisteredTokens(ctx, programID)
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		require.Equal(t, first.TokenId, got[first.TokenId].TokenId)
+		require.Equal(t, first.Mint, got[first.TokenId].Mint)
+		require.Equal(t, second.TokenId, got[second.TokenId].TokenId)
+		require.Equal(t, second.IsLockUnlock, got[second.TokenId].IsLockUnlock)
+	})
+
+	t.Run("provider error", func(t *testing.T) {
+		mockProvider := new(wallet.MockTxProvider)
+		mockProvider.On("GetProgramAccounts", mock.Anything, programID, mock.AnythingOfType("*rpc.GetProgramAccountsOpts")).
+			Return(rpc.GetProgramAccountsResult(nil), errors.New("rpc unavailable")).Once()
+
+		txSender := NewTxSender(mockProvider, chainConfig)
+		_, err := txSender.GetAllRegisteredTokens(ctx, programID)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "get token registry accounts")
+	})
+}
+
 func mustSignedSignature(t *testing.T, payload []byte, signer solana.PrivateKey) solana.Signature {
 	t.Helper()
 
@@ -2736,19 +2756,56 @@ func mustSignedSignature(t *testing.T, payload []byte, signer solana.PrivateKey)
 	return signature
 }
 
+func mockBridgeTokenRegistry(
+	t *testing.T,
+	mockProvider *wallet.MockTxProvider,
+	regs ...skyline_program.TokenRegistry,
+) {
+	t.Helper()
+
+	results := make(rpc.GetProgramAccountsResult, 0, len(regs))
+
+	for _, reg := range regs {
+		body, err := reg.Marshal()
+		require.NoError(t, err)
+
+		raw := append(append([]byte(nil), skyline_program.Account_TokenRegistry[:]...), body...)
+		results = append(results, &rpc.KeyedAccount{
+			Pubkey:  solana.NewWallet().PublicKey(),
+			Account: &rpc.Account{Data: rpc.DataBytesOrJSONFromBytes(raw)},
+		})
+	}
+
+	mockProvider.On(
+		"GetProgramAccounts",
+		mock.Anything,
+		skyline_program.ProgramID,
+		mock.AnythingOfType("*rpc.GetProgramAccountsOpts"),
+	).Return(results, nil)
+}
+
+func defaultBridgeTokenRegistry(tokenID uint16) skyline_program.TokenRegistry {
+	return skyline_program.TokenRegistry{
+		TokenId:           tokenID,
+		Mint:              solana.NewWallet().PublicKey(),
+		IsLockUnlock:      true,
+		MinBridgingAmount: 10,
+		Bump:              250,
+	}
+}
+
 func TestMarshalTransaction(t *testing.T) {
-	txProvider, err := wallet.NewProvider(rpc.LocalNet_RPC)
-	require.NoError(t, err)
+	mockProvider := new(wallet.MockTxProvider)
+	mockBridgeTokenRegistry(t, mockProvider, defaultBridgeTokenRegistry(1))
 
 	chainConfig := &ChainConfig{
 		TreasuryAddress:    solana.MustPublicKeyFromBase58("AXXWYCH6PNm6AGjaasPG1maarfQvRedSw18wj91Nem1F"),
 		BridgingFeeAddress: solana.MustPublicKeyFromBase58("7d5xBAeX92qPugMB5vixR1cy3wpRCxKE7ckShZaJbPPL"),
 	}
 
-	txSender := NewTxSender(txProvider, chainConfig)
+	txSender := NewTxSender(mockProvider, chainConfig)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := context.Background()
 
 	recentBlockHash := solana.Hash{123}
 	payloadBytes := []byte{1, 2, 3, 4}
@@ -2757,18 +2814,8 @@ func TestMarshalTransaction(t *testing.T) {
 	}
 
 	txDto := BridgeTransactionDto{
-		ProgramID:  skyline_program.ProgramID,
-		SenderAddr: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
-		Receivers: []BridgingTxReceiver{
-			{
-				Address: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
-				TokenAmount: wallet.TokenAmount{
-					Amount:    new(big.Int).SetUint64(1000),
-					TokenMint: "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
-				},
-			},
-		},
-		BatchID:        1,
+		ProgramID:      skyline_program.ProgramID,
+		SenderAddr:     "BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa",
 		PayloadBytes:   payloadBytes,
 		SignaturePairs: signaturePairs,
 	}
@@ -2792,32 +2839,5 @@ func TestMarshalTransaction(t *testing.T) {
 	require.NotNil(t, unmarshaledTx)
 	require.Equal(t, tx.Message.RecentBlockhash, unmarshaledTx.Message.RecentBlockhash)
 	require.Equal(t, tx.Message.Instructions, unmarshaledTx.Message.Instructions)
-
 	require.Len(t, tx.Message.Instructions, 2)
-
-	instrData := tx.Message.Instructions[1].Data
-	// skip the 8-byte instruction discriminator
-	dec := binary.NewBorshDecoder(instrData[8:])
-
-	var transfers []skyline_program.TransferItem
-	err = dec.Decode(&transfers)
-	require.NoError(t, err)
-
-	var mints []solana.PublicKey
-	err = dec.Decode(&mints)
-	require.NoError(t, err)
-
-	var batchID uint64
-	err = dec.Decode(&batchID)
-	require.NoError(t, err)
-
-	require.Len(t, transfers, 1)
-	require.Equal(t, solana.MustPublicKeyFromBase58("BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa"), transfers[0].Recipient)
-	require.Equal(t, uint8(0), transfers[0].MintIndex)
-	require.Equal(t, uint64(1000), transfers[0].Amount)
-
-	require.Len(t, mints, 1)
-	require.Equal(t, solana.MustPublicKeyFromBase58("BU13B5RBqMRLvzYKaC3nTE7C3Vso3RNXzVnMVUGMgRfa"), mints[0])
-
-	require.Equal(t, uint64(1), batchID)
 }

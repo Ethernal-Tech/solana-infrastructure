@@ -2,7 +2,9 @@ package sendtx
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
 )
@@ -14,7 +16,7 @@ import (
 // The returned slice is intentionally:
 //
 //   - Ordered: 6 deployment-stable "global" keys followed by 3 keys per
-//     registered mint (mint, token registry PDA, vault ATA). Order is
+//     registered token ID (mint, token registry PDA, vault ATA). Order is
 //     deterministic so callers that persist ALT contents can diff predictably.
 //   - Free of sender / receiver data: the fee payer and per-transfer
 //     recipient / recipient-ATA keys are intentionally excluded because they
@@ -25,15 +27,15 @@ import (
 //
 // Typical usage:
 //
-//   - Bootstrap: call with the full set of currently-registered mints once,
+//   - Bootstrap: call with the full set of currently-registered token IDs once,
 //     then feed the result into ALTAdmin.NewExtendInstructions to populate
 //     a fresh ALT.
 //   - Token registration: call again with the full (or just the newly-added)
-//     mint set. ALTAdmin deduplicates against what's already in the ALT, so
+//     token set. ALTAdmin deduplicates against what's already in the ALT, so
 //     the emitted extend instruction will carry only the 3 new entries.
 func (txSnd *TxSender) BridgeTransactionALTAddresses(
 	programID solana.PublicKey,
-	mints []solana.PublicKey,
+	mints map[uint16]solana.PublicKey,
 ) ([]solana.PublicKey, error) {
 	if err := requireBridgeProgramID(programID); err != nil {
 		return nil, err
@@ -57,12 +59,27 @@ func (txSnd *TxSender) BridgeTransactionALTAddresses(
 		solana.SysVarInstructionsPubkey,
 	)
 
-	for _, mint := range mints {
+	tokenIDs := make([]int, 0, len(mints))
+	for tokenID := range mints {
+		tokenIDs = append(tokenIDs, int(tokenID))
+	}
+
+	sort.Ints(tokenIDs)
+
+	for _, rawTokenID := range tokenIDs {
+		tokenID := uint16(rawTokenID) //nolint:gosec // values came from uint16 map keys.
+		mint := mints[tokenID]
+
+		if mint == skyline_program.NATIVE_SOL_MINT {
+			// skip because public key cannot be zero
+			continue
+		}
+
 		if err := wallet.ValidatePublicKey(mint, true); err != nil {
 			return nil, fmt.Errorf("invalid mint %s: %w", mint.String(), err)
 		}
 
-		if err := txSnd.instructionConfig.ApplyOptions(WithTokenRegistryPDA(mint)); err != nil {
+		if err := txSnd.instructionConfig.ApplyOptions(WithTokenRegistryPDA(tokenID)); err != nil {
 			return nil, fmt.Errorf(
 				"failed to derive token registry PDA for mint %s: %w", mint.String(), err)
 		}

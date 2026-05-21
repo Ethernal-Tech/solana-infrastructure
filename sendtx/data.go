@@ -2,6 +2,7 @@ package sendtx
 
 import (
 	"bytes"
+	"context"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	bin "github.com/gagliardetto/binary"
@@ -20,15 +21,16 @@ type ChainConfig struct {
 }
 
 type SolanaPayload struct {
-	Blockhash string               `json:"blockhash"`
-	Receivers []BridgingTxReceiver `json:"receivers"`
-	BatchID   uint64               `json:"batch_id"`
+	Blockhash [32]byte          `json:"blockhash"`
+	Receivers []PayloadReceiver `json:"receivers"`
+	FeeAmount uint64            `json:"fee_amount"`
+	BatchID   uint64            `json:"batch_id"`
 }
 
 func (payload SolanaPayload) Marshal() ([]byte, error) {
 	var buf bytes.Buffer
-
 	enc := bin.NewBinEncoder(&buf)
+
 	if err := enc.Encode(payload); err != nil {
 		return nil, err
 	}
@@ -42,12 +44,18 @@ func (payload *SolanaPayload) Unmarshal(raw []byte) error {
 	return dec.Decode(payload)
 }
 
+type PayloadReceiver struct {
+	Address     [32]byte           `json:"address"`
+	TokenAmount wallet.TokenAmount `json:"token_amount"`
+}
+
 type BridgingTxReceiver struct {
 	Address     string             `json:"address"`
 	TokenAmount wallet.TokenAmount `json:"token_amount"`
 }
 
 type BridgeRequestDto struct {
+	Ctx          context.Context
 	ProgramID    solana.PublicKey
 	DstChainID   string
 	SenderAddr   string
@@ -56,11 +64,17 @@ type BridgeRequestDto struct {
 	OperationFee uint64
 }
 
+type TransferItem struct {
+	Recipient solana.PublicKey
+	MintIndex uint8
+	Amount    uint64
+}
+
 type BridgeTransactionDto struct {
+	Ctx            context.Context
 	ProgramID      solana.PublicKey
 	SenderAddr     string
-	Receivers      []BridgingTxReceiver
-	BatchID        uint64
+	Receivers      []PayloadReceiver
 	PayloadBytes   []byte
 	SignaturePairs map[solana.PublicKey]solana.Signature
 }
@@ -77,6 +91,7 @@ type HotWalletIncrementDto struct {
 	ProgramID  solana.PublicKey
 	SenderAddr string
 	TokenMint  string
+	TokenID    uint16
 	Amount     uint64
 }
 
@@ -114,9 +129,7 @@ type UpdateFeeConfigDto struct {
 	BridgingFee     uint64
 
 	UpdateTreasury     bool
-	UpdateRelayer      bool
 	NewTreasuryAddress string
-	NewRelayerAddress  string
 }
 
 type UpdateProgramVersionDto struct {

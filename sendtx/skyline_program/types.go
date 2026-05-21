@@ -158,8 +158,6 @@ type FeeConfig struct {
 	Treasury solanago.PublicKey `json:"treasury"`
 
 	// Relayer account — receives bridge_fee directly per bridge request
-	Relayer solanago.PublicKey `json:"relayer"`
-
 	// Who is allowed to update this config (bridge authority)
 	Authority solanago.PublicKey `json:"authority"`
 
@@ -182,11 +180,6 @@ func (obj FeeConfig) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
 	err = encoder.Encode(obj.Treasury)
 	if err != nil {
 		return errors.NewField("Treasury", err)
-	}
-	// Serialize `Relayer`:
-	err = encoder.Encode(obj.Relayer)
-	if err != nil {
-		return errors.NewField("Relayer", err)
 	}
 	// Serialize `Authority`:
 	err = encoder.Encode(obj.Authority)
@@ -226,11 +219,6 @@ func (obj *FeeConfig) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) 
 	err = decoder.Decode(&obj.Treasury)
 	if err != nil {
 		return errors.NewField("Treasury", err)
-	}
-	// Deserialize `Relayer`:
-	err = decoder.Decode(&obj.Relayer)
-	if err != nil {
-		return errors.NewField("Relayer", err)
 	}
 	// Deserialize `Authority`:
 	err = decoder.Decode(&obj.Authority)
@@ -272,9 +260,6 @@ type FeeConfigUpdatedEvent struct {
 
 	// Treasury address
 	Treasury solanago.PublicKey `json:"treasury"`
-
-	// Relayer address
-	Relayer solanago.PublicKey `json:"relayer"`
 }
 
 func (obj FeeConfigUpdatedEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
@@ -292,11 +277,6 @@ func (obj FeeConfigUpdatedEvent) MarshalWithEncoder(encoder *binary.Encoder) (er
 	err = encoder.Encode(obj.Treasury)
 	if err != nil {
 		return errors.NewField("Treasury", err)
-	}
-	// Serialize `Relayer`:
-	err = encoder.Encode(obj.Relayer)
-	if err != nil {
-		return errors.NewField("Relayer", err)
 	}
 	return nil
 }
@@ -326,11 +306,6 @@ func (obj *FeeConfigUpdatedEvent) UnmarshalWithDecoder(decoder *binary.Decoder) 
 	err = decoder.Decode(&obj.Treasury)
 	if err != nil {
 		return errors.NewField("Treasury", err)
-	}
-	// Deserialize `Relayer`:
-	err = decoder.Decode(&obj.Relayer)
-	if err != nil {
-		return errors.NewField("Relayer", err)
 	}
 	return nil
 }
@@ -930,6 +905,11 @@ type TransactionExecutedEvent struct {
 
 	// The number of transfers in the executed transaction
 	TransferCount uint8 `json:"transferCount"`
+
+	// Lamports paid from the vault PDA to the relayer (`payer`) as
+	// compensation for submitting this batch. `0` when the relayer chose
+	// not to take a fee (e.g. subsidized batches).
+	Fee uint64 `json:"fee"`
 }
 
 func (obj TransactionExecutedEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
@@ -942,6 +922,11 @@ func (obj TransactionExecutedEvent) MarshalWithEncoder(encoder *binary.Encoder) 
 	err = encoder.Encode(obj.TransferCount)
 	if err != nil {
 		return errors.NewField("TransferCount", err)
+	}
+	// Serialize `Fee`:
+	err = encoder.Encode(obj.Fee)
+	if err != nil {
+		return errors.NewField("Fee", err)
 	}
 	return nil
 }
@@ -967,6 +952,11 @@ func (obj *TransactionExecutedEvent) UnmarshalWithDecoder(decoder *binary.Decode
 	if err != nil {
 		return errors.NewField("TransferCount", err)
 	}
+	// Deserialize `Fee`:
+	err = decoder.Decode(&obj.Fee)
+	if err != nil {
+		return errors.NewField("Fee", err)
+	}
 	return nil
 }
 
@@ -980,86 +970,6 @@ func (obj *TransactionExecutedEvent) Unmarshal(buf []byte) error {
 
 func UnmarshalTransactionExecutedEvent(buf []byte) (*TransactionExecutedEvent, error) {
 	obj := new(TransactionExecutedEvent)
-	err := obj.Unmarshal(buf)
-	if err != nil {
-		return nil, err
-	}
-	return obj, nil
-}
-
-// Describes a single transfer within a batched bridge transaction.
-//
-// `mint_index` references into the deduplicated `mints` instruction argument,
-// which is also parallel to the mint accounts section in `remaining_accounts`.
-type TransferItem struct {
-	// The destination wallet pubkey (not the ATA — the raw owner wallet).
-	Recipient solanago.PublicKey `json:"recipient"`
-
-	// Zero-based index into the `mints: Vec<Pubkey>` instruction argument.
-	MintIndex uint8 `json:"mintIndex"`
-
-	// Amount of tokens to transfer, in the mint's native base unit.
-	Amount uint64 `json:"amount"`
-}
-
-func (obj TransferItem) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
-	// Serialize `Recipient`:
-	err = encoder.Encode(obj.Recipient)
-	if err != nil {
-		return errors.NewField("Recipient", err)
-	}
-	// Serialize `MintIndex`:
-	err = encoder.Encode(obj.MintIndex)
-	if err != nil {
-		return errors.NewField("MintIndex", err)
-	}
-	// Serialize `Amount`:
-	err = encoder.Encode(obj.Amount)
-	if err != nil {
-		return errors.NewField("Amount", err)
-	}
-	return nil
-}
-
-func (obj TransferItem) Marshal() ([]byte, error) {
-	buf := bytes.NewBuffer(nil)
-	encoder := binary.NewBorshEncoder(buf)
-	err := obj.MarshalWithEncoder(encoder)
-	if err != nil {
-		return nil, fmt.Errorf("error while encoding TransferItem: %w", err)
-	}
-	return buf.Bytes(), nil
-}
-
-func (obj *TransferItem) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
-	// Deserialize `Recipient`:
-	err = decoder.Decode(&obj.Recipient)
-	if err != nil {
-		return errors.NewField("Recipient", err)
-	}
-	// Deserialize `MintIndex`:
-	err = decoder.Decode(&obj.MintIndex)
-	if err != nil {
-		return errors.NewField("MintIndex", err)
-	}
-	// Deserialize `Amount`:
-	err = decoder.Decode(&obj.Amount)
-	if err != nil {
-		return errors.NewField("Amount", err)
-	}
-	return nil
-}
-
-func (obj *TransferItem) Unmarshal(buf []byte) error {
-	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
-	if err != nil {
-		return fmt.Errorf("error while unmarshaling TransferItem: %w", err)
-	}
-	return nil
-}
-
-func UnmarshalTransferItem(buf []byte) (*TransferItem, error) {
-	obj := new(TransferItem)
 	err := obj.Unmarshal(buf)
 	if err != nil {
 		return nil, err

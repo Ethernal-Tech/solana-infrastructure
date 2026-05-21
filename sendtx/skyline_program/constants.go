@@ -42,6 +42,15 @@ const MAX_VALIDATORS_CHANGE = uint32(0xa)
 // various attack vectors and lack proper consensus mechanisms.
 const MIN_VALIDATORS = uint32(0x4)
 
+// Sentinel value used in `bridge_transaction.mints` to signal a native SOL
+// transfer (lamports paid directly from the vault PDA to the recipient
+// wallet) rather than an SPL token mint/burn or lock/unlock.
+//
+// Equal to `Pubkey::default()` and to the System Program ID. Cannot collide
+// with any valid SPL mint, and follows the same convention used by
+// Wormhole / Jupiter / other Solana bridges for "native SOL".
+var NATIVE_SOL_MINT = solanago.MustPublicKeyFromBase58("11111111111111111111111111111111")
+
 // Seed string used to derive the global `ProgramConfig` PDA (version / deploy metadata).
 var PROGRAM_CONFIG_SEED = []byte{112, 114, 111, 103, 114, 97, 109, 95, 99, 111, 110, 102, 105, 103}
 

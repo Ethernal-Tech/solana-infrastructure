@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Ethernal-Tech/solana-infrastructure/sendtx"
 	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -897,28 +896,27 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 					// that is the only way to map the payload hash from smart contract that oracle is expecting
 					// to the batch that was actually executed by relayer within this tx
 					if name == "TransactionExecutedEvent" {
-						if len(transaction.Message.Instructions) < 2 {
+						ed25519Data, err := FindEd25519InstructionData(
+							transaction.Message.Instructions,
+							transaction.Message.AccountKeys,
+						)
+						if err != nil {
 							t.logger.Warn(fmt.Sprintf(
-								"TransactionExecutedEvent in tx %d but only %d instructions (need >= 2)",
-								txIndex+1, len(transaction.Message.Instructions)))
+								"TransactionExecutedEvent in tx %d but no ed25519 instruction: %s",
+								txIndex+1, err.Error()))
 
 							continue
 						}
 
-						parsedIx, err := ParseBridgeInstructionData(transaction.Message.Instructions[1].Data)
+						payload, err := ExtractSolanaPayloadFromEd25519(ed25519Data)
 						if err != nil {
 							t.notify(ErrorNotification{
-								fmt.Errorf("failed to parse bridge instruction data: %w", err), false})
+								fmt.Errorf("failed to extract solana payload from ed25519 instruction: %w", err), false})
 
-							t.logger.Warn(fmt.Sprintf("Failed to parse bridge instruction data: %s", err.Error()))
+							t.logger.Warn(fmt.Sprintf(
+								"Failed to extract solana payload from ed25519 instruction: %s", err.Error()))
 
 							continue
-						}
-
-						payload := sendtx.SolanaPayload{
-							Blockhash: transaction.Message.RecentBlockhash.String(),
-							Receivers: parsedIx.Receivers,
-							BatchID:   parsedIx.BatchID,
 						}
 
 						payloadBytes, err := payload.Marshal()
@@ -927,6 +925,8 @@ func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool
 								fmt.Errorf("failed to marshal payload: %w", err), false})
 
 							t.logger.Warn(fmt.Sprintf("Failed to marshal payload: %s", err.Error()))
+
+							continue
 						}
 
 						innerActionHash = sha256.Sum256(payloadBytes)

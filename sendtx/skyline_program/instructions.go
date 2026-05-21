@@ -33,7 +33,6 @@ func NewBridgeRequestInstruction(
 	associatedTokenProgramAccount solanago.PublicKey,
 	feeConfigAccount solanago.PublicKey,
 	treasuryAccount solanago.PublicKey,
-	relayerAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
 	enc__ := binary.NewBorshEncoder(buf__)
@@ -91,14 +90,15 @@ func NewBridgeRequestInstruction(
 		// The token mint for the tokens being bridged
 		accounts__.Append(solanago.NewAccountMeta(mintAccount, true, false))
 		// Account 6 "token_registry": Read-only, Non-signer, Required
-		// The TokenRegistry PDA for this mint.
+		// The TokenRegistry PDA for this token id.
 		//
 		// Determines the bridge mechanic for this token:
 		// - is_lock_unlock = true  → transfer tokens into vault (lock)
 		// - is_lock_unlock = false → burn tokens from user's account
 		//
 		// Only tokens registered via register_lock_unlock_token or register_mint_burn_token
-		// are permitted to be bridged. Unregistered mints will fail this account constraint.
+		// are permitted to be bridged. The account address is derived from the
+		// stored token_id, and the stored mint must match `mint`.
 		accounts__.Append(solanago.NewAccountMeta(tokenRegistryAccount, false, false))
 		// Account 7 "token_program": Read-only, Non-signer, Required, Address: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
 		// The token program for token operations (burn/transfer)
@@ -115,9 +115,6 @@ func NewBridgeRequestInstruction(
 		// Account 11 "treasury": Writable, Non-signer, Required
 		// Treasury — receives operational fee immediately
 		accounts__.Append(solanago.NewAccountMeta(treasuryAccount, true, false))
-		// Account 12 "relayer": Writable, Non-signer, Required
-		// Relayer — receives bridge_fee immediately
-		accounts__.Append(solanago.NewAccountMeta(relayerAccount, true, false))
 	}
 
 	// Create the instruction.
@@ -131,12 +128,6 @@ func NewBridgeRequestInstruction(
 // Builds a "bridge_transaction" instruction.
 // Create or approve a bridging transaction. //  // This instruction creates or approves a bridging transaction for transferring tokens from the vault // to a recipient. The first call creates the transaction, and subsequent calls from validators approve it. // Once the consensus threshold is met, the tokens are automatically minted (if vault is mint authority) // or transferred from the vault to the recipient's associated token account, and the transaction account is closed. //  // # Arguments // * `ctx` - The context containing accounts for the bridging transaction // * `amount` - The amount of tokens to transfer to the recipient // * `batch_id` - The batch ID of the transaction (must be greater than last_batch_id) //  // # Errors // * `InvalidBatchId` - If the batch_id is not greater than the last_batch_id // * `InvalidReceiver` - If the receiver is the same as the payer // * `NoSignersProvided` - If no validator signers are provided // * `NotEnoughSigners` - If insufficient validators have signed (checked when threshold is met) // * `InvalidSigner` - If a signer is not in the validator set
 func NewBridgeTransactionInstruction(
-	// Params:
-	transfersParam []TransferItem,
-	mintsParam []solanago.PublicKey,
-	batchIdParam uint64,
-
-	// Accounts:
 	payerAccount solanago.PublicKey,
 	validatorSetAccount solanago.PublicKey,
 	vaultAccount solanago.PublicKey,
@@ -153,33 +144,19 @@ func NewBridgeTransactionInstruction(
 	if err != nil {
 		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
 	}
-	{
-		// Serialize `transfersParam`:
-		err = enc__.Encode(transfersParam)
-		if err != nil {
-			return nil, errors.NewField("transfersParam", err)
-		}
-		// Serialize `mintsParam`:
-		err = enc__.Encode(mintsParam)
-		if err != nil {
-			return nil, errors.NewField("mintsParam", err)
-		}
-		// Serialize `batchIdParam`:
-		err = enc__.Encode(batchIdParam)
-		if err != nil {
-			return nil, errors.NewField("batchIdParam", err)
-		}
-	}
+
 	accounts__ := solanago.AccountMetaSlice{}
 
 	// Add the accounts to the instruction.
 	{
 		// Account 0 "payer": Writable, Signer, Required
-		// Pays rent for any recipient ATAs that need to be created (~0.002 SOL each).
+		// Pays rent for any recipient ATAs that need to be created (~0.002 SOL each)
+		// and receives the `fee` lamport payout from the vault (relayer compensation,
+		// analogous to EVM's `msg.sender`).
 		accounts__.Append(solanago.NewAccountMeta(payerAccount, true, true))
 		// Account 1 "validator_set": Writable, Non-signer, Required
 		// Validator set — holds threshold, registered signers, and last_batch_id.
-		// The `batch_id` constraint is the first line of replay protection.
+		// `last_batch_id` is compared against the signed payload in the handler.
 		accounts__.Append(solanago.NewAccountMeta(validatorSetAccount, true, false))
 		// Account 2 "vault": Writable, Non-signer, Required
 		// Bridge vault PDA — signing authority for mint_to and transfer_checked CPIs.
@@ -268,7 +245,7 @@ func NewBridgeVsuInstruction(
 }
 
 // Builds a "hot_wallet_increment" instruction.
-// Lock additional lock/unlock tokens into the bridge vault (hot wallet). //  // Top-ups vault liquidity using canonical wrapped SOL (wSOL) only. // The mint must be exactly `So11111111111111111111111111111111111111112`. //  // # Arguments // * `ctx`    - Instruction context // * `amount` - Raw token amount to lock (must be > 0) //  // # Errors // * `InvalidAmount`     - `amount` is zero // * `InsufficientFunds` - Signer's ATA balance is below `amount` // * `InvalidVault`      - Provided vault ATA doesn't match the canonical ATA // * `InvalidMintToken` - Mint is not canonical wSOL
+// Top up the bridge vault hot wallet with either wSOL or native SOL. //  // Eligible mints: // - `WSOL_MINT` (`So11111111111111111111111111111111111111112`): // `transfer_checked` signer ATA → vault ATA. // - `NATIVE_SOL_MINT` (System Program ID sentinel): // `system_program::transfer` signer → vault PDA (lamports). //  // `signers_ata` and `vault_ata` are unused on the native-SOL branch and // can be filled with any placeholder (typically the System Program). //  // # Arguments // * `ctx`    - Instruction context // * `amount` - Raw amount to deposit (must be > 0). For wSOL: token base // units. For native SOL: lamports. //  // # Errors // * `InvalidAmount`       - `amount` is zero // * `InvalidMintToken`    - Mint is neither wSOL nor the native-SOL sentinel // * `InsufficientFunds`   - Signer lacks the requested wSOL / lamports // * `InvalidTokenAccount` - wSOL branch: signer's ATA failed validation // * `InvalidVault`        - wSOL branch: vault ATA address mismatch
 func NewHotWalletIncrementInstruction(
 	// Params:
 	amountParam uint64,
@@ -303,29 +280,31 @@ func NewHotWalletIncrementInstruction(
 	// Add the accounts to the instruction.
 	{
 		// Account 0 "signer": Writable, Signer, Required
-		// The user depositing tokens into the bridge hot wallet.
-		// Pays rent if the vault ATA needs to be created.
+		// The user depositing liquidity into the bridge hot wallet.
+		// Pays rent if the vault ATA needs to be created (wSOL branch).
 		accounts__.Append(solanago.NewAccountMeta(signerAccount, true, true))
 		// Account 1 "signers_ata": Writable, Non-signer, Required
-		// The signer's source token account. Tokens are debited from here.
+		// and validated at runtime. Native-SOL branch — unused; pass any account
+		// (e.g. the System Program) as a placeholder.
 		accounts__.Append(solanago.NewAccountMeta(signersAtaAccount, true, false))
-		// Account 2 "vault": Read-only, Non-signer, Required
-		// Bridge vault PDA — owns `vault_ata`.
-		accounts__.Append(solanago.NewAccountMeta(vaultAccount, false, false))
+		// Account 2 "vault": Writable, Non-signer, Required
+		// Bridge vault PDA. `mut` because the native-SOL branch credits its
+		// lamport balance directly via `system_program::transfer`.
+		accounts__.Append(solanago.NewAccountMeta(vaultAccount, true, false))
 		// Account 3 "vault_ata": Writable, Non-signer, Required
-		// The vault's associated token account for the deposited mint.
-		// Created on-demand inside `process_instruction` if missing —
-		// `init_if_needed` is avoided to keep the program free of that feature.
+		// validated at runtime. Native-SOL branch — unused; placeholder allowed.
 		accounts__.Append(solanago.NewAccountMeta(vaultAtaAccount, true, false))
-		// Account 4 "mint": Read-only, Non-signer, Required, Address: So11111111111111111111111111111111111111112
-		// The mint of the tokens being deposited.
-		// Must be canonical wrapped SOL mint.
+		// Account 4 "mint": Read-only, Non-signer, Required
+		// (native-SOL branch); enforced at runtime. For the native-SOL branch
+		// this is the System Program account (since `NATIVE_SOL_MINT == System
+		// Program ID`), matching the convention used by `bridge_transaction`.
 		accounts__.Append(solanago.NewAccountMeta(mintAccount, false, false))
 		// Account 5 "token_program": Read-only, Non-signer, Required, Address: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
 		// SPL Token program.
 		accounts__.Append(solanago.NewAccountMeta(tokenProgramAccount, false, false))
 		// Account 6 "system_program": Read-only, Non-signer, Required
-		// System program — required for ATA creation CPI.
+		// System program — required for ATA creation CPI (wSOL branch) and the
+		// native-SOL lamport transfer.
 		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
 		// Account 7 "associated_token_program": Read-only, Non-signer, Required, Address: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
 		// Associated token program — required for ATA creation CPI.
@@ -356,7 +335,6 @@ func NewInitializeInstruction(
 	feeConfigAccount solanago.PublicKey,
 	programConfigAccount solanago.PublicKey,
 	treasuryAccount solanago.PublicKey,
-	relayerAccount solanago.PublicKey,
 	systemProgramAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
@@ -424,10 +402,7 @@ func NewInitializeInstruction(
 		// Account 5 "treasury": Read-only, Non-signer, Required
 		// The treasury account that will receive operational fees
 		accounts__.Append(solanago.NewAccountMeta(treasuryAccount, false, false))
-		// Account 6 "relayer": Read-only, Non-signer, Required
-		// Relayer account — receives bridge fees directly
-		accounts__.Append(solanago.NewAccountMeta(relayerAccount, false, false))
-		// Account 7 "system_program": Read-only, Non-signer, Required
+		// Account 6 "system_program": Read-only, Non-signer, Required
 		// The system program for account creation
 		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
 	}
@@ -491,21 +466,20 @@ func NewRegisterLockUnlockTokenInstruction(
 		// Anchor validates this is a real, initialized SPL mint account.
 		accounts__.Append(solanago.NewAccountMeta(mintAccount, false, false))
 		// Account 3 "token_registry": Writable, Non-signer, Required
-		// TokenRegistry PDA — one per mint.
+		// TokenRegistry PDA — one per token_id.
 		//
-		// This is the Solana-idiomatic "map entry": given any mint pubkey, the
-		// registry for that mint is always at a deterministic address:
-		// PDA([TOKEN_REGISTRY_SEED, mint])
+		// This is the Solana-idiomatic "map entry": given any token_id, the
+		// registry for that token is always at a deterministic address:
+		// PDA([TOKEN_REGISTRY_SEED, token_id.to_le_bytes()])
 		//
 		// Anchor's `init` rejects creation if the account already exists,
-		// making double-registration of the same mint impossible.
-		// PDA: [TOKEN_REGISTRY_SEED, mint.key()]
+		// making double-registration of the same token_id impossible.
+		// PDA: [TOKEN_REGISTRY_SEED, token_id.to_le_bytes()]
 		accounts__.Append(solanago.NewAccountMeta(tokenRegistryAccount, true, false))
 		// Account 4 "token_id_guard": Writable, Non-signer, Required
 		// TokenIdGuard PDA — one per token_id.
 		//
-		// Acts as a uniqueness sentinel: if two mints tried to share the same
-		// token_id, the second `init` would fail, protecting destination-chain routing.
+		// Compatibility sentinel derived by token_id.
 		// PDA: [TOKEN_ID_GUARD_SEED, token_id.to_le_bytes()]
 		accounts__.Append(solanago.NewAccountMeta(tokenIdGuardAccount, true, false))
 		// Account 5 "system_program": Read-only, Non-signer, Required
@@ -617,12 +591,12 @@ func NewRegisterMintBurnTokenInstruction(
 		// inside the Metaplex create_metadata_accounts_v3 CPI call.
 		accounts__.Append(solanago.NewAccountMeta(metadataAccount, true, false))
 		// Account 5 "token_registry": Writable, Non-signer, Required
-		// One PDA per mint — enforces mint uniqueness across the registry.
-		// Anchor init fails with AlreadyInUse if this mint was already registered.
-		// PDA: [TOKEN_REGISTRY_SEED, mint.key()]
+		// One PDA per token_id — enforces token_id uniqueness across the registry.
+		// Anchor init fails with AlreadyInUse if this token_id was already registered.
+		// PDA: [TOKEN_REGISTRY_SEED, token_id.to_le_bytes()]
 		accounts__.Append(solanago.NewAccountMeta(tokenRegistryAccount, true, false))
 		// Account 6 "token_id_guard": Writable, Non-signer, Required
-		// One PDA per token_id — enforces token_id uniqueness across the registry.
+		// One PDA per token_id — retained for compatibility with existing clients.
 		// Anchor init fails with AlreadyInUse if this token_id is already taken.
 		// PDA: [TOKEN_ID_GUARD_SEED, token_id.to_le_bytes()]
 		accounts__.Append(solanago.NewAccountMeta(tokenIdGuardAccount, true, false))
@@ -645,19 +619,17 @@ func NewRegisterMintBurnTokenInstruction(
 }
 
 // Builds a "update_fee_config" instruction.
-// Update the fee configuration for the bridge. //  // This instruction allows the authority to update the fee configuration parameters for the bridge, // including the minimum operational fee, bridge fee, minimum bridging amount, treasury address, and // relayer address. The authority can choose to update any subset of these parameters, and the instruction // will validate the new values and emit an event with the updated configuration. //  // # Arguments // * `ctx` - The context containing accounts for updating the fee configuration // * `min_operational_fee` - Optional new minimum operational fee (lamports) // * `bridge_fee` - Optional new bridge fee (lamports) // * `update_treasury` - Optional flag indicating whether to update the treasury address // * `update_relayer` - Optional flag indicating whether to update the relayer address //  // # Errors // * `InvalidRelayer` - If the new relayer address is invalid // * `InvalidTreasury` - If the new treasury address is invalid
+// Update the fee configuration for the bridge. //  // This instruction allows the authority to update the fee configuration parameters for the bridge, // including the minimum operational fee, bridge fee, minimum bridging amount, treasury address, and // relayer address. The authority can choose to update any subset of these parameters, and the instruction // will validate the new values and emit an event with the updated configuration. //  // # Arguments // * `ctx` - The context containing accounts for updating the fee configuration // * `min_operational_fee` - Optional new minimum operational fee (lamports) // * `bridge_fee` - Optional new bridge fee (lamports) // * `update_treasury` - Optional flag indicating whether to update the treasury address //  // # Errors // * `InvalidTreasury` - If the new treasury address is invalid
 func NewUpdateFeeConfigInstruction(
 	// Params:
 	minOperationalFeeParam *uint64,
 	bridgeFeeParam *uint64,
 	updateTreasuryParam *bool,
-	updateRelayerParam *bool,
 
 	// Accounts:
 	authorityAccount solanago.PublicKey,
 	feeConfigAccount solanago.PublicKey,
 	newTreasuryAccount solanago.PublicKey,
-	newRelayerAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
 	enc__ := binary.NewBorshEncoder(buf__)
@@ -722,24 +694,6 @@ func NewUpdateFeeConfigInstruction(
 				}
 			}
 		}
-		// Serialize `updateRelayerParam` (optional):
-		{
-			if updateRelayerParam == nil {
-				err = enc__.WriteOption(false)
-				if err != nil {
-					return nil, errors.NewOption("updateRelayerParam", fmt.Errorf("error while encoding optionality: %w", err))
-				}
-			} else {
-				err = enc__.WriteOption(true)
-				if err != nil {
-					return nil, errors.NewOption("updateRelayerParam", fmt.Errorf("error while encoding optionality: %w", err))
-				}
-				err = enc__.Encode(updateRelayerParam)
-				if err != nil {
-					return nil, errors.NewField("updateRelayerParam", err)
-				}
-			}
-		}
 	}
 	accounts__ := solanago.AccountMetaSlice{}
 
@@ -752,9 +706,6 @@ func NewUpdateFeeConfigInstruction(
 		// Account 2 "new_treasury": Read-only, Non-signer, Required
 		// New treasury account — only needed when updating treasury.
 		accounts__.Append(solanago.NewAccountMeta(newTreasuryAccount, false, false))
-		// Account 3 "new_relayer": Read-only, Non-signer, Required
-		// New relayer account — only needed when updating relayer.
-		accounts__.Append(solanago.NewAccountMeta(newRelayerAccount, false, false))
 	}
 
 	// Create the instruction.
@@ -766,18 +717,7 @@ func NewUpdateFeeConfigInstruction(
 }
 
 // Builds a "update_program_version" instruction.
-//
-// Updates `ProgramConfig.version_string` to match a new deployment.
-//
-// Program upgrades do not write to this PDA; the bridge authority must call this
-// after upgrading so integrations reading the account see the correct version.
-//
-// # Arguments
-// * `version_string` - Semver display string (at most 32 bytes)
-//
-// # Errors
-// * `Unauthorized`         - Signer is not `ProgramConfig.authority`
-// * `VersionStringTooLong`   - `version_string` exceeds storage limit
+// Updates `ProgramConfig.version_string` to match a new deployment. //  // Program upgrades do not write to this PDA; the bridge authority must call this // after upgrading so integrations reading the account see the correct version. //  // # Arguments // * `version_string` - Semver display string (at most 32 bytes) //  // # Errors // * `Unauthorized`         - Signer is not `ProgramConfig.authority` // * `VersionStringTooLong`   - `version_string` exceeds storage limit
 func NewUpdateProgramVersionInstruction(
 	// Params:
 	versionStringParam string,

@@ -2,7 +2,6 @@ package sendtx
 
 import (
 	"context"
-	"math/big"
 	"testing"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -31,15 +30,14 @@ func TestBridgingTransaction_WithAddressLookupTables(t *testing.T) {
 
 	const receiverCount = 8
 
-	receivers := make([]BridgingTxReceiver, receiverCount)
-	mint := solana.NewWallet().PublicKey().String()
+	receivers := make([]PayloadReceiver, receiverCount)
 
 	for i := 0; i < receiverCount; i++ {
-		receivers[i] = BridgingTxReceiver{
-			Address: solana.NewWallet().PublicKey().String(),
+		receivers[i] = PayloadReceiver{
+			Address: solana.NewWallet().PublicKey(),
 			TokenAmount: wallet.TokenAmount{
-				Amount:    new(big.Int).SetUint64(1000),
-				TokenMint: mint,
+				Amount:  1000,
+				TokenID: 1,
 			},
 		}
 	}
@@ -51,14 +49,16 @@ func TestBridgingTransaction_WithAddressLookupTables(t *testing.T) {
 	txDto := BridgeTransactionDto{
 		ProgramID:      skyline_program.ProgramID,
 		SenderAddr:     senderPrivateKey.PublicKey().String(),
-		BatchID:        42,
+		Receivers:      receivers,
 		PayloadBytes:   []byte{1, 2, 3, 4},
 		SignaturePairs: signaturePairs,
-		Receivers:      receivers,
 	}
 
+	mockProvider := new(wallet.MockTxProvider)
+	mockBridgeTokenRegistry(t, mockProvider, defaultBridgeTokenRegistry(1))
+
 	txSender := NewTxSender(
-		new(wallet.MockTxProvider),
+		mockProvider,
 		&ChainConfig{
 			TreasuryAddress:    treasuryWallet.PublicKey,
 			BridgingFeeAddress: feeWallet.PublicKey,
