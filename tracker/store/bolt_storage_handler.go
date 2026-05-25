@@ -69,6 +69,10 @@ type StorageHandler interface {
 	// GetLatestProcessedBlockPoint returns the latest processed block point data.
 	GetLatestProcessedBlockPoint() (*BlockPoint, error)
 
+	// GetEventsBySlot returns all tracked events stored for the given slot, from both the
+	// unprocessed and processed indexer event buckets.
+	GetEventsBySlot(slot uint64) ([]EventRecord, error)
+
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
@@ -552,6 +556,39 @@ func (b *BoltStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {
 	}
 
 	return result, nil
+}
+
+func (b *BoltStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error) {
+	var results []EventRecord
+
+	err := b.db.View(func(tx *bolt.Tx) error {
+		for _, bucketName := range [][]byte{unprocessedEventsBucket, processedEventsBucket} {
+			bucket := tx.Bucket(bucketName)
+			if bucket == nil {
+				continue
+			}
+
+			cursor := bucket.Cursor()
+
+			for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+				var record EventRecord
+				if err := json.Unmarshal(v, &record); err != nil {
+					return fmt.Errorf("failed to unmarshal event record: %w", err)
+				}
+
+				if record.Slot == slot {
+					results = append(results, record)
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }
 
 // Retrieves up to N unprocessed events in order (by event ID)

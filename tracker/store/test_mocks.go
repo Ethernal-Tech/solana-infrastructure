@@ -91,6 +91,13 @@ func (m *MockStorageHandler) GetLatestProcessedBlockPoint() (*BlockPoint, error)
 	return args.Get(0).(*BlockPoint), args.Error(1)
 }
 
+func (m *MockStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error) {
+	args := m.Called(slot)
+
+	//nolint:forcetypeassert
+	return args.Get(0).([]EventRecord), args.Error(1)
+}
+
 func (m *MockStorageHandler) GetUnprocessedEvents(limit int) ([]EventRecord, error) {
 	args := m.Called()
 
