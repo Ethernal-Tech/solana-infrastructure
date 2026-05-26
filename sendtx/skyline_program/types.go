@@ -35,8 +35,11 @@ type BridgeRequestEvent struct {
 	// The fee amount for the relayer to process this bridge request
 	BridgeFee uint64 `json:"bridgeFee"`
 
-	// The operational fee for the bridge to maintain its operations
-	OperationalFee uint64 `json:"operationalFee"`
+	// The operation fee for the bridge to maintain its operations
+	OperationFee uint64 `json:"operationFee"`
+
+	// Transaction value (bridge_fee + amount if currency is bridged)
+	Value uint64 `json:"value"`
 }
 
 func (obj BridgeRequestEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
@@ -70,10 +73,15 @@ func (obj BridgeRequestEvent) MarshalWithEncoder(encoder *binary.Encoder) (err e
 	if err != nil {
 		return errors.NewField("BridgeFee", err)
 	}
-	// Serialize `OperationalFee`:
-	err = encoder.Encode(obj.OperationalFee)
+	// Serialize `OperationFee`:
+	err = encoder.Encode(obj.OperationFee)
 	if err != nil {
-		return errors.NewField("OperationalFee", err)
+		return errors.NewField("OperationFee", err)
+	}
+	// Serialize `Value`:
+	err = encoder.Encode(obj.Value)
+	if err != nil {
+		return errors.NewField("Value", err)
 	}
 	return nil
 }
@@ -119,10 +127,15 @@ func (obj *BridgeRequestEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (er
 	if err != nil {
 		return errors.NewField("BridgeFee", err)
 	}
-	// Deserialize `OperationalFee`:
-	err = decoder.Decode(&obj.OperationalFee)
+	// Deserialize `OperationFee`:
+	err = decoder.Decode(&obj.OperationFee)
 	if err != nil {
-		return errors.NewField("OperationalFee", err)
+		return errors.NewField("OperationFee", err)
+	}
+	// Deserialize `Value`:
+	err = decoder.Decode(&obj.Value)
+	if err != nil {
+		return errors.NewField("Value", err)
 	}
 	return nil
 }
