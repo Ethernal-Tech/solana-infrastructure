@@ -289,11 +289,6 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 			"invalid treasury address %s in chain config: %w", txSnd.chainConfig.TreasuryAddress.String(), err)
 	}
 
-	if err := wallet.ValidatePublicKey(txSnd.chainConfig.BridgingFeeAddress, false); err != nil {
-		return nil, fmt.Errorf(
-			"invalid bridging fee address %s in chain config: %w", txSnd.chainConfig.BridgingFeeAddress.String(), err)
-	}
-
 	// for now, we only support txs with one receiver
 	receiver := tx.Receivers[0]
 

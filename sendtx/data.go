@@ -16,7 +16,6 @@ type ChainConfig struct {
 	MinFeeForBridging     uint64
 	MinOperationFeeAmount uint64
 	TreasuryAddress       solana.PublicKey
-	BridgingFeeAddress    solana.PublicKey
 	CurrencyTokenID       uint16
 }
 

@@ -136,15 +136,6 @@ func NewBridgeTransactionInstruction(
 	associatedTokenProgramAccount solanago.PublicKey,
 	instructionsAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
-	buf__ := new(bytes.Buffer)
-	enc__ := binary.NewBorshEncoder(buf__)
-
-	// Encode the instruction discriminator.
-	err := enc__.WriteBytes(Instruction_BridgeTransaction[:], false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
-	}
-
 	accounts__ := solanago.AccountMetaSlice{}
 
 	// Add the accounts to the instruction.
@@ -179,7 +170,7 @@ func NewBridgeTransactionInstruction(
 	return solanago.NewInstruction(
 		ProgramID,
 		accounts__,
-		buf__.Bytes(),
+		nil,
 	), nil
 }
 
