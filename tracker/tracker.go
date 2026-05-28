@@ -431,13 +431,13 @@ func (t *EventTracker) Start(ctx context.Context) {
 		err         error
 	)
 
-	if t.startFromSlot != 0 {
+	currentSlot, err = t.storage.ReadSlot()
+	if err != nil {
+		_ = handleError(err, "cannot read starting slot")
+	}
+
+	if t.startFromSlot != 0 && currentSlot < t.startFromSlot {
 		currentSlot = t.startFromSlot
-	} else {
-		currentSlot, err = t.storage.ReadSlot()
-		if err != nil {
-			_ = handleError(err, "cannot read starting slot")
-		}
 	}
 
 	t.applyTx = t.storage.UseTransactions()
