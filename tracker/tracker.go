@@ -130,6 +130,10 @@ type EventTrackerConfig struct {
 	// Notifications enables slot, event, and error notification channels.
 	// If nil, notifications are disabled.
 	Notifications *NotificationConfig `json:"-"`
+
+	// StartFromSlot is the slot number from which the tracker should start tracking.
+	// If 0, the tracker will start from the latest slot.
+	StartFromSlot uint64 `json:"startFromSlot"`
 }
 
 // EventTracker monitors the Solana blockchain for specific program events, emits notifications
@@ -204,6 +208,9 @@ type EventTracker struct {
 
 	// delay between block fetches for rate limiting
 	blockFetchDelay time.Duration
+
+	// startFromSlot is the slot number from which the tracker should start tracking.
+	startFromSlot uint64
 
 	chainHeadSlot       uint64
 	chainHeadSlotOffset uint64
@@ -282,6 +289,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		blockFetchDelay:     blockFetchDelay,
 		chainHeadSlotOffset: 10,
 		chainHeadSlot:       0,
+		startFromSlot:       config.StartFromSlot,
 	}
 
 	if config.Notifications != nil {
@@ -418,9 +426,18 @@ func (t *EventTracker) Start(ctx context.Context) {
 		_ = handleError(nil, "tracker is already running")
 	}
 
-	currentSlot, err := t.storage.ReadSlot()
-	if err != nil {
-		_ = handleError(err, "cannot read starting slot")
+	var (
+		currentSlot uint64
+		err         error
+	)
+
+	if t.startFromSlot != 0 {
+		currentSlot = t.startFromSlot
+	} else {
+		currentSlot, err = t.storage.ReadSlot()
+		if err != nil {
+			_ = handleError(err, "cannot read starting slot")
+		}
 	}
 
 	t.applyTx = t.storage.UseTransactions()
