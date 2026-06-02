@@ -4,47 +4,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
-	"io"
 	"reflect"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
-	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
-	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/hashicorp/go-hclog"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
 	binary "github.com/gagliardetto/binary"
+	"github.com/gagliardetto/solana-go"
 )
 
-type eventTrackerState string
-
-var (
-	active     eventTrackerState = "active"
-	paused     eventTrackerState = "paused"
-	inactive   eventTrackerState = "inactive"
-	terminated eventTrackerState = "terminated"
-)
-
-type chainHeadRefreshResult struct {
-	nonFatalErr error
-	fatalErr    error
-}
-
-// SlotNotification represents a notification sent on the chSlot channel.
-type SlotNotification struct {
-	// SlotNumber is the number of the slot that was just processed.
-	SlotNumber uint64
-
-	// BlockExists indicates whether a block actually exists in this slot. True if a block exists,
-	// false if the slot is empty.
-	BlockExists bool
-}
+const getSignaturesForAddressMaxLimit = 1000
 
 // EventNotification represents a notification sent on the chEvent channel.
 type EventNotification struct {
@@ -69,164 +42,39 @@ type EventNotification struct {
 	EventData any
 }
 
-// ErrorNotification represents a notification sent on the chError channel.
-//
-//nolint:errname
-type ErrorNotification struct {
-	// Error is the concrete error that occurred during event tracker execution.
-	error
-
-	// Terminated indicates whether this error will cause the event tracker to terminate. If
-	// true, the tracker entered graceful termination process. A true value has the same effect
-	// as calling the [Terminate] method, so all described in its documentation apply.
-	Terminated bool
+type EventSubscriber interface {
+	AddEvent(event EventNotification) error
 }
 
-// NotificationConfig holds channel buffer sizes for slot, event, and error
-// notifications. If zero is provided for any channel, that channel will be unbuffered.
-type NotificationConfig struct {
-	SlotBuffSize  uint8
-	EventBuffSize uint8
-	ErrorBuffSize uint8
-}
-
-// EventTrackerConfig holds the configuration for an EventTracker.
 type EventTrackerConfig struct {
-	// RPCEndpoint is the full Solana JSON-RPC URL.
-	// Used only if Client is nil — in that case a new rpc.Client is created
-	// from this endpoint and stored back into Client.
-	RPCEndpoint string `json:"rpcEndpoint"`
-
-	// Client is the Solana RPC client. If nil, RPCEndpoint must be set and
-	// a client will be constructed automatically.
-	Client *rpc.Client `json:"-"`
-
-	// TrackedPrograms maps each program public key to its event specifications.
-	// Must contain at least one entry.
-	TrackedPrograms map[string]ProgramEventSpecs `json:"-"`
-
-	// Commitment specifies the confirmation level required before a slot is
-	// considered for indexing. Recommended: rpc.CommitmentFinalized.
-	Commitment string `json:"commitment"`
-
-	// Logger records state changes and actions during the tracker's lifecycle.
-	// If nil, no logging is performed.
-	Logger hclog.Logger `json:"-"`
-
-	// EventSink is an optional output where the tracker writes each successfully
-	// indexed event (only if the event type implements String(uint64, solana.PublicKey) string).
-	// If nil, no events are written.
-	EventSink io.Writer `json:"-"`
-
-	// PollTime is the polling interval for checking new blocks/slots. Must be
-	// between 200ms and 15 minutes. Zero means 500ms.
-	PollTime time.Duration `json:"-"`
-
-	// BlockFetchDelay is the delay between block fetches for rate limiting.
-	// Must be between 0 and 30s. Zero means 250ms. Recommended: 250ms for
-	// public RPCs, 0 for private RPCs.
-	BlockFetchDelay time.Duration `json:"-"`
-
-	// Notifications enables slot, event, and error notification channels.
-	// If nil, notifications are disabled.
-	Notifications *NotificationConfig `json:"-"`
-
-	// StartFromSlot is the slot number from which the tracker should start tracking.
-	// If 0, the tracker will start from the latest slot.
-	StartFromSlot uint64 `json:"startFromSlot"`
+	RPCEndpoint            string
+	Client                 *rpc.Client
+	TrackedPrograms        map[string]ProgramEventSpecs
+	Commitment             string
+	Logger                 hclog.Logger
+	PollTime               time.Duration
+	StartFromSlot          uint64
+	BlockRoundingThreshold uint64
+	EventSubscriber        EventSubscriber
 }
 
-// EventTracker monitors the Solana blockchain for specific program events, emits notifications
-// on a channels, and persists data to a storage.
 type EventTracker struct {
-	// client is the Solana RPC client used to fetch blocks from the blockchain network.
-	client *rpc.Client
-
-	// storage is responsible for persisting indexed data. For details, see the [StorageHandler]
-	// interface documentation.
-	storage store.StorageHandler
-
-	// trackedPrograms defines which programs and events the tracker observes. Only events listed
-	// in ProgramEventSpecs for programs present in this map are indexed.
-	trackedPrograms map[solana.PublicKey]ProgramEventSpecs
-
-	// commitment specifies the commitment level required for a block/slot to be considered for
-	// indexing. Common values are "confirmed" and "finalized" (no chain reorganization). Other
-	// levels should not be considered.
-	commitment rpc.CommitmentType
-
-	// Optional fields (from [EventTrackerConfig]):
-
-	// logger records state changes and actions during the tracker's lifecycle. By default, no
-	// logging is performed.
-	logger hclog.Logger
-
-	// eventSink is an optional output destination where the tracker writes event each time an
-	// event is successfully indexed and processed. Write will be performed only if the golang
-	// type representing the event implements `String(uint64, solana.PublicKey) string` method,
-	// where the first argument is the slot number in which the event occurred, and the second
-	// is the public key of the program that emitted it. By default, no output
-	eventSink io.Writer
-
-	// pollTime specifies the polling interval for checking new blocks/slots. By default, 500
-	// milliseconds.
-	pollTime time.Duration
-
-	// notifications indicates whether the tracker should send notifications on chSlot, chEvent
-	// and chError channels. When false, channels remain nil. When true, channels are created
-	// with buffer sizes from config.Notifications.
-	notifications bool
-
-	// Internal fields (not settable through [NewEventTracker]):
-
-	// state represents the current status of the tracker, e.g., active, inactive, or paused.
-	state eventTrackerState
-
-	// chEvent is a channel used to emit notification each time a tracked event is processed.
-	chEvent chan EventNotification
-
-	// chSlot is a channel used to emit notification each time a slot is processed.
-	chSlot chan SlotNotification
-
-	// chError is a channel used to emit notifications when an error occurs during event tracker
-	// execution.
-	chError chan ErrorNotification
-
-	// chPause is a channel used to pause the tracker after completing the current slot.
-	chPause chan struct{}
-
-	// chTerminate is a channel used to terminate the tracker gracefully after processing
-	// the current slot. Upon termination, chEvent and chSlot channels are closed.
-	chTerminate chan struct{}
-
-	// applyTx indicates whether operations on the storage are executed within a transaction. In
-	// other words, whether the [(StorageHandler).ApplyTransaction] is invoked. It is set to the
-	// return value of the [(StorageHandler).UseTransaction] method.
-	applyTx bool
-
-	mut sync.Mutex
-
-	// delay between block fetches for rate limiting
-	blockFetchDelay time.Duration
-
-	// startFromSlot is the slot number from which the tracker should start tracking.
-	startFromSlot uint64
-
-	chainHeadSlot       uint64
-	chainHeadSlotOffset uint64
+	client                     *rpc.Client
+	storage                    store.StorageHandler
+	trackedPrograms            map[solana.PublicKey]ProgramEventSpecs
+	commitment                 rpc.CommitmentType
+	logger                     hclog.Logger
+	pollTime                   time.Duration
+	chainHeadSlot              uint64
+	chainHeadSlotOffset        uint64
+	lastProcessedTxSignature   solana.Signature
+	lastQueriedTxSignature     solana.Signature
+	hasUnprocessedTxSignatures bool
+	unprocessedTxSignatures    []solana.Signature
+	blockRoundingThreshold     uint64
+	EventSubscriber            EventSubscriber
 }
 
-// NewEventTracker constructs a new EventTracker instance.
-//
-// The config argument is required and must not be nil. If config.Client is
-// nil, config.RPCEndpoint is used to create one automatically.
-//
-// The storage argument is required and must not be nil. It is
-// passed explicitly so callers can inject any StorageHandler implementation
-// (e.g. for testing).
-//
-// Optional settings (Logger, EventSink, PollTime, BlockFetchDelay, Notifications)
-// are taken from config; zero values use defaults (e.g. PollTime 0 → 500ms).
 func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (*EventTracker, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
@@ -236,27 +84,12 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		return nil, fmt.Errorf("storage cannot be nil")
 	}
 
+	if config.EventSubscriber == nil {
+		return nil, fmt.Errorf("invalid configuration, event subscriber not set. Failed to init Event Tracker")
+	}
+
 	if len(config.TrackedPrograms) == 0 {
 		return nil, fmt.Errorf("must track at least one program")
-	}
-
-	// Set up RPC client if not provided externally
-	if err := setupClient(config); err != nil {
-		return nil, err
-	}
-
-	pollTime := config.PollTime
-	if pollTime == 0 {
-		pollTime = 500 * time.Millisecond
-	}
-
-	blockFetchDelay := config.BlockFetchDelay
-	if blockFetchDelay == 0 {
-		blockFetchDelay = 250 * time.Millisecond
-	}
-
-	if config.Logger == nil {
-		config.Logger = hclog.NewNullLogger().Named("event-tracker")
 	}
 
 	trackedPrograms := make(map[solana.PublicKey]ProgramEventSpecs, len(config.TrackedPrograms))
@@ -270,791 +103,426 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		trackedPrograms[programID] = eventSpecs
 	}
 
+	// Set up RPC client if not provided externally
+	if err := setupClientNew(config); err != nil {
+		return nil, err
+	}
+
+	pollTime := config.PollTime
+	if pollTime == 0 {
+		pollTime = 500 * time.Millisecond
+	}
+
 	commitment := rpc.CommitmentFinalized
 	if config.Commitment == "confirmed" {
 		commitment = rpc.CommitmentConfirmed
 	}
 
-	t := &EventTracker{
-		client:              config.Client,
-		storage:             storage,
-		trackedPrograms:     trackedPrograms,
-		commitment:          commitment,
-		logger:              config.Logger,
-		eventSink:           config.EventSink,
-		pollTime:            pollTime,
-		state:               inactive,
-		chPause:             make(chan struct{}),
-		chTerminate:         make(chan struct{}),
-		blockFetchDelay:     blockFetchDelay,
-		chainHeadSlotOffset: 10,
-		chainHeadSlot:       0,
-		startFromSlot:       config.StartFromSlot,
+	blockRoundingThreshold := config.BlockRoundingThreshold
+	if blockRoundingThreshold == 0 {
+		blockRoundingThreshold = 10
 	}
 
-	if config.Notifications != nil {
-		t.notifications = true
-		n := config.Notifications
-		t.chSlot = make(chan SlotNotification, n.SlotBuffSize)
-		t.chEvent = make(chan EventNotification, n.EventBuffSize)
-		t.chError = make(chan ErrorNotification, n.ErrorBuffSize)
+	t := &EventTracker{
+		client:                   config.Client,
+		storage:                  storage,
+		trackedPrograms:          trackedPrograms,
+		commitment:               commitment,
+		logger:                   config.Logger,
+		pollTime:                 pollTime,
+		chainHeadSlot:            config.StartFromSlot,
+		chainHeadSlotOffset:      50,
+		lastProcessedTxSignature: solana.Signature{},
+		lastQueriedTxSignature:   solana.Signature{},
+		unprocessedTxSignatures:  []solana.Signature{},
+		blockRoundingThreshold:   blockRoundingThreshold,
+		EventSubscriber:          config.EventSubscriber,
 	}
 
 	return t, nil
 }
 
-// ChSlot returns a read-only channel that emits a notification each time a slot is successfully
-// processed. A notification is emitted even if no block exists for that slot. If notifications
-// are not enabled (config.Notifications was nil), a nil channel is returned.
-func (t *EventTracker) ChSlot() <-chan SlotNotification {
-	return (<-chan SlotNotification)(t.chSlot)
-}
+func (t *EventTracker) Start(ctx context.Context) {
+	t.logger.Info("Starting new event tracker")
 
-// ChEvent returns a read-only channel that emits a notification each time a tracked event is
-// successfully processed. If notifications are not enabled (config.Notifications was nil), a nil
-// channel is returned.
-func (t *EventTracker) ChEvent() <-chan EventNotification {
-	return (<-chan EventNotification)(t.chEvent)
-}
+	i := 0
 
-// ChError returns a read-only channel that emits a notification each time an error occurs during
-// event tracker execution. If notifications are not enabled (config.Notifications was nil), a nil
-// channel is returned.
-func (t *EventTracker) ChError() <-chan ErrorNotification {
-	return (<-chan ErrorNotification)(t.chError)
-}
+	err := t.initialize()
+	if err != nil {
+		t.logger.Warn(fmt.Sprintf("Failed to initialize event tracker: %s", err.Error()))
 
-// State returns the current state of the EventTracker.
-func (t *EventTracker) State() eventTrackerState {
-	t.mut.Lock()
-	defer t.mut.Unlock()
-
-	return t.state
-}
-
-// Pause pauses the running event tracker. If the method returns true, it means the tracker has
-// entered the pausing process. Returning from the method does not mean the tracker is paused.
-// Use the [State] method to check if it has actually reached the "paused" state. Calling [Start],
-// [Terminate], or another [Pause] method before [State] returns "paused" is considered undefined
-// behavior. Returning false means the event tracker cannot be paused because it is not in the
-// active state.
-func (t *EventTracker) Pause() bool {
-	if t.State() != active {
-		return false
+		return
 	}
 
-	t.chPause <- struct{}{}
+	for {
+		select {
+		case <-ctx.Done():
+			t.logger.Info("Context done, stopping event tracker")
 
-	return true
-}
+			return
+		case <-time.After(t.pollTime):
+			{
+				t.logger.Debug("Polling for new events")
 
-// Terminate gracefully terminates the running event tracker. If the method returns true, it
-// means the event tracker has entered the termination process. Returning from the method does
-// not mean the tracker is terminated. Use the [State] method to check if it has actually reached
-// the "inactive" state. Calling [Start], [Pause], or another [Terminate] method before [State]
-// returns "inactive" is considered undefined behavior. Returning false means the event tracker
-// cannot be terminated because it is not in the active state.
-func (t *EventTracker) Terminate() bool {
-	if t.State() != active {
-		return false
-	}
+				if i >= 10 {
+					err := t.refreshChainHead(ctx)
+					if err != nil {
+						t.logger.Warn(fmt.Sprintf("Failed to refresh chain head: %s", err.Error()))
+					}
 
-	t.chTerminate <- struct{}{}
+					i = 0
 
-	return true
-}
+					continue
+				}
 
-func (t *EventTracker) setState(state eventTrackerState) {
-	t.mut.Lock()
-	defer t.mut.Unlock()
-	t.state = state
-}
+				// Force tx processing if there are unprocessed tx signatures
+				// before querying new transactions
+				if i%2 == 0 || t.lastQueriedTxSignature != t.lastProcessedTxSignature {
+					err := t.fetchNextGetFullTxBySignature(ctx)
+					if err != nil {
+						t.logger.Warn(fmt.Sprintf("Failed to fetch next full tx by signature: %s", err.Error()))
+					}
+				} else {
+					for programID := range t.trackedPrograms {
+						err := t.fetchNextGetSignaturesForAddress(ctx, programID)
+						if err != nil {
+							t.logger.Warn(fmt.Sprintf("Failed to fetch next signatures for address: %s", err.Error()))
+						}
+					}
+				}
 
-func sendNotification[T any](ch chan<- T, v T) {
-	select {
-	case ch <- v:
-	default:
-	}
-}
-
-func (t *EventTracker) notify(notification any) {
-	if t.notifications {
-		switch value := notification.(type) {
-		case SlotNotification:
-			sendNotification(t.chSlot, value)
-		case EventNotification:
-			sendNotification(t.chEvent, value)
-		case ErrorNotification:
-			sendNotification(t.chError, value)
+				i++
+			}
 		}
 	}
 }
 
-func (t *EventTracker) terminate() {
-	if t.notifications {
-		close(t.chEvent)
-		close(t.chSlot)
-		close(t.chError)
-	}
-
-	t.storage = nil
-	t.setState(terminated)
-	t.logger.Info("Event tracker has been terminated")
-}
-
-// Start launches the event tracker in a background goroutine, transitioning from inactive to
-// active state. The tracker processes blocks continuously until Terminate() or Pause() is called.
-// Use Pause() to temporarily halt and Start() to resume processing.
-// Once terminated, the tracker cannot be restarted.
-func (t *EventTracker) Start(ctx context.Context) {
-	handleError := func(err error, msg string) error {
-		t.logger.Error(msg, "err", err)
+// Initialization on startup
+func (t *EventTracker) initialize() error {
+	latestBlockPoint, err := t.storage.GetLatestBlockPoint()
+	if err != nil {
+		t.logger.Warn(fmt.Sprintf("Failed to get latest block point: %s", err.Error()))
 
 		return err
 	}
 
-	if t.client == nil {
-		_ = handleError(nil,
-			"method must be invoked on an instance initialized through [NewEventTracker]")
-	} else if t.storage == nil {
-		_ = handleError(nil,
-			"this event tracker instance is terminated, only paused tracker can be again started")
+	if latestBlockPoint != nil && latestBlockPoint.BlockSlot > t.chainHeadSlot {
+		t.chainHeadSlot = latestBlockPoint.BlockSlot
 	}
 
-	// prevent starting if already active
-	if t.State() == active {
-		_ = handleError(nil, "tracker is already running")
-	}
-
-	var (
-		currentSlot uint64
-		err         error
-	)
-
-	currentSlot, err = t.storage.ReadSlot()
+	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
 	if err != nil {
-		_ = handleError(err, "cannot read starting slot")
+		t.logger.Warn(fmt.Sprintf("Failed to get all unprocessed transactions: %s", err.Error()))
+
+		return err
 	}
 
-	if t.startFromSlot != 0 && currentSlot < t.startFromSlot {
-		currentSlot = t.startFromSlot
-	}
-
-	t.applyTx = t.storage.UseTransactions()
-	// Transition to active state before starting the goroutine
-	t.setState(active)
-
-	go func() {
-		t.logger.Info(fmt.Sprintf("Starting indexing from slot %d", currentSlot))
-
-		// Polling loop
-		for {
-			select { // before fetching new slot, check for pause/terminate signals
-			case <-t.chPause:
-				t.setState(paused)
-				t.logger.Info("Event tracker has been paused")
-
-				return // exit goroutine
-			case <-t.chTerminate:
-				t.terminate()
-
-				return // exit goroutine
-			default: // continue with normal execution
-			}
-
-			t.logger.Debug(fmt.Sprintf("Checking chain head at slot %d", currentSlot))
-
-			fetchedSlot, err := t.client.GetSlot(ctx, t.commitment)
-			if err != nil {
-				t.notify(
-					ErrorNotification{fmt.Errorf("failed to fetch slot %d: %w", currentSlot, err), false})
-				t.logger.Error(fmt.Sprintf("Failed to fetch slot %d: %s", currentSlot, err.Error()))
-				t.logger.Info(fmt.Sprintf("I will try again in %d ms...", t.pollTime.Milliseconds()))
-				time.Sleep(t.pollTime)
-
-				continue
-			}
-
-			if err := t.refreshChainHead(ctx, fetchedSlot); err != nil {
-				t.notify(ErrorNotification{
-					fmt.Errorf("failed to store chain head: %w", err), true,
-				})
-				t.logger.Error(fmt.Sprintf("Failed to store chain head: %s", err.Error()))
-				t.terminate()
-
-				return
-			}
-
-			if currentSlot > fetchedSlot {
-				t.logger.Debug(
-					fmt.Sprintf("Reached chain head, waiting for slot %d to be %s (currently last %s: %d)",
-						currentSlot,
-						t.commitment,
-						t.commitment,
-						fetchedSlot,
-					))
-				t.logger.Info(fmt.Sprintf("I will try again in %d ms...", t.pollTime.Milliseconds()))
-				time.Sleep(t.pollTime)
-
-				continue
-			}
-
-			// Catch-up loop: Process all available slots up to chain head
-			lastChainHeadRefresh := time.Now().UTC()
-
-			refreshChainHeadResultCh := make(chan chainHeadRefreshResult, 1)
-			refreshInFlight := false
-
-			for currentSlot <= fetchedSlot {
-				// Check for pause/terminate signals during catch-up
-				select {
-				case <-t.chPause:
-					t.setState(paused)
-					t.logger.Info("Event tracker has been paused")
-
-					return
-				case <-t.chTerminate:
-					t.terminate()
-
-					return
-				default:
-				}
-
-				select {
-				case result := <-refreshChainHeadResultCh:
-					refreshInFlight = false
-					lastChainHeadRefresh = time.Now().UTC()
-
-					if result.nonFatalErr != nil {
-						t.notify(ErrorNotification{
-							fmt.Errorf("failed to fetch latest slot: %w", result.nonFatalErr), false})
-						t.logger.Error(fmt.Sprintf("Failed to fetch latest slot: %s", result.nonFatalErr.Error()))
-					}
-
-					if result.fatalErr != nil {
-						t.notify(ErrorNotification{
-							fmt.Errorf("failed to store chain head: %w", result.fatalErr), true,
-						})
-						t.logger.Error(fmt.Sprintf("Failed to store chain head: %s", result.fatalErr.Error()))
-						t.terminate()
-
-						return
-					}
-				default:
-				}
-
-				if !refreshInFlight && time.Since(lastChainHeadRefresh) >= t.pollTime {
-					refreshInFlight = true
-
-					go func() {
-						latestSlot, err := t.client.GetSlot(ctx, rpc.CommitmentConfirmed)
-						if err != nil {
-							refreshChainHeadResultCh <- chainHeadRefreshResult{nonFatalErr: err}
-
-							return
-						}
-
-						if err := t.refreshChainHead(ctx, latestSlot); err != nil {
-							refreshChainHeadResultCh <- chainHeadRefreshResult{fatalErr: err}
-
-							return
-						}
-
-						refreshChainHeadResultCh <- chainHeadRefreshResult{}
-					}()
-				}
-
-				// Process current slot - cannot interrupt (pause, terminate) during processing of a slot
-				t.logger.Info(fmt.Sprintf("Slot %d is %s, processing...", currentSlot, t.commitment))
-
-				block, err := t.client.GetBlockWithOpts(ctx, currentSlot, &rpc.GetBlockOpts{
-					TransactionDetails:             rpc.TransactionDetailsFull,
-					MaxSupportedTransactionVersion: new(uint64),
-				})
-
-				if err != nil {
-					// Check if slot was skipped
-					if isSkippedSlotError(err) {
-						if err := t.storage.StoreSlot(nil, currentSlot); err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to store skipped slot: %w", err), true})
-							t.logger.Error(fmt.Sprintf("Failed to store skipped slot: %s", err.Error()))
-							t.terminate()
-
-							return
-						}
-
-						t.notify(SlotNotification{currentSlot, false})
-						t.logger.Info(fmt.Sprintf("Slot %d was skipped (no block produced), moving to next slot", currentSlot))
-
-						currentSlot++
-
-						continue
-					}
-
-					if isBlockNotAvailableForSlotError(err, currentSlot) {
-						if err := t.storage.StoreSlot(nil, currentSlot); err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to store slot with no available block: %w", err), true})
-							t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
-							t.terminate()
-
-							return
-						}
-
-						t.notify(SlotNotification{currentSlot, false})
-						t.logger.Info(fmt.Sprintf("Slot %d block not available from RPC, moving to next slot", currentSlot))
-
-						currentSlot++
-
-						continue
-					}
-
-					cleanedUp, firstAvailableBlock := isCleanedUpBlockError(err, currentSlot)
-
-					if cleanedUp {
-						t.logger.Warn(fmt.Sprintf("Slot %d was cleaned up, does not exist in node", currentSlot))
-
-						if err := t.storage.StoreSlot(nil, currentSlot-1); err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to store slot after cleanup skip: %w", err), true})
-							t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
-							t.terminate()
-
-							return
-						}
-
-						t.notify(SlotNotification{currentSlot, false})
-						t.logger.Info(fmt.Sprintf(
-							"Skipped cleaned-up slot %d, advancing to next slot", currentSlot))
-
-						if firstAvailableBlock > currentSlot {
-							t.logger.Info(fmt.Sprintf("Skipped cleaned-up slot %d, advancing to first available block in slot %d",
-								currentSlot, firstAvailableBlock))
-
-							currentSlot = firstAvailableBlock
-
-							continue
-						}
-
-						currentSlot++
-
-						continue
-					}
-
-					// Retry for other errors - break inner loop to re-fetch chain head
-					t.notify(ErrorNotification{
-						fmt.Errorf("failed to fetch block for slot %d: %w", currentSlot, err), false})
-					t.logger.Error(fmt.Sprintf("Failed to fetch block for slot %d: %s", currentSlot, err.Error()))
-					t.logger.Info(fmt.Sprintf("I will try again in %d ms...", t.pollTime.Milliseconds()))
-					time.Sleep(t.pollTime)
-
-					break // Break inner loop, outer loop will retry
-				}
-
-				if block == nil {
-					if err := t.storage.StoreSlot(nil, currentSlot); err != nil {
-						t.notify(ErrorNotification{
-							fmt.Errorf("failed to store slot: %w", err), true})
-						t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
-						t.terminate()
-
-						return
-					}
-
-					t.notify(SlotNotification{currentSlot, false})
-					t.logger.Debug(fmt.Sprintf("Slot %d is empty", currentSlot))
-
-					currentSlot++
-
-					continue
-				}
-
-				t.logger.Info(fmt.Sprintf("Block in slot %d has %d transactions", currentSlot, len(block.Transactions)))
-
-				var blockNumber uint64
-				if block.BlockHeight != nil {
-					blockNumber = *block.BlockHeight
-				} else {
-					t.logger.Warn(fmt.Sprintf("No block height found for block at slot %d", currentSlot))
-				}
-
-				if err := t.storage.StoreBlock(nil, store.BlockPoint{
-					BlockSlot:   currentSlot,
-					BlockHash:   block.Blockhash,
-					BlockNumber: blockNumber,
-					Processed:   true,
-				}); err != nil {
-					t.notify(ErrorNotification{
-						fmt.Errorf("failed to store block: %w", err), true})
-					t.logger.Error(fmt.Sprintf("Failed to store block: %s", err.Error()))
-					t.terminate()
-
-					return
-				}
-
-				if !t.processBlock(currentSlot, block) {
-					return
-				}
-
-				t.notify(SlotNotification{currentSlot, true})
-
-				currentSlot++
-
-				if t.blockFetchDelay > 0 {
-					time.Sleep(t.blockFetchDelay) // Rate limiting between block fetches to avoid hitting RPC limits during catch-up
-				}
-			}
-
-			if currentSlot > fetchedSlot {
-				// Sleep when caught up to chain head
-				t.logger.Debug(fmt.Sprintf("Processed up to slot %d, waiting for new blocks...", currentSlot-1))
-				time.Sleep(t.pollTime)
-			}
-		}
-	}()
-}
-
-// refreshChainHead fetches the block at the given slot and persists it as the
-// latest block point. If the slot has no block (skipped/empty), the update is
-// silently skipped and the previously stored chain head remains valid.
-// Only storage write errors are returned; RPC/fetch failures are non-fatal.
-func (t *EventTracker) refreshChainHead(ctx context.Context, slot uint64) error {
-	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", slot))
-
-	startSlot := t.chainHeadSlot
-	if t.chainHeadSlot == 0 {
-		startSlot = slot - t.chainHeadSlotOffset
-	}
-
-	slotsWithBlocks, err := t.client.GetBlocks(ctx, startSlot, &slot, rpc.CommitmentConfirmed)
+	t.lastProcessedTxSignature, err = t.storage.GetLastProcessedTransaction()
 	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to fetch blocks with limit to refresh head %d: %s", slot, err.Error()))
+		t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
 
-		return nil
+		return err
 	}
 
-	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
-		10, slot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
-
-	if len(slotsWithBlocks) == 0 {
-		return nil
-	}
-
-	var bp store.BlockPoint
-
-	for _, slot := range slotsWithBlocks {
-		block, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
-			TransactionDetails:             rpc.TransactionDetailsNone,
-			MaxSupportedTransactionVersion: new(uint64),
-			Commitment:                     rpc.CommitmentConfirmed,
-		})
-		if err != nil {
-			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
-
-			continue
-		}
-
-		if block == nil {
-			t.logger.Warn(fmt.Sprintf("No block found at slot %d", slot))
-
-			continue
-		}
-
-		var blockNumber uint64
-		if block.BlockHeight != nil {
-			blockNumber = *block.BlockHeight
+	t.unprocessedTxSignatures = unprocessedTxSignatures
+	if len(t.unprocessedTxSignatures) > 0 {
+		t.lastQueriedTxSignature = t.unprocessedTxSignatures[len(t.unprocessedTxSignatures)-1]
+	} else {
+		// If there are no unprocessed tx signatures, use the last processed tx signature
+		// as the last queried tx signature so we can continue querying for new transactions
+		// If empty it's a first run, so we need to start from the beginning
+		if t.lastProcessedTxSignature != (solana.Signature{}) {
+			t.lastQueriedTxSignature = t.lastProcessedTxSignature
 		} else {
-			t.logger.Warn(fmt.Sprintf("No block height found for block at slot %d", slot))
-		}
-
-		bp = store.BlockPoint{
-			BlockSlot:   slot,
-			BlockHash:   block.Blockhash,
-			BlockNumber: blockNumber,
-			Processed:   false,
-		}
-
-		if err := t.storage.StoreBlock(nil, bp); err != nil {
-			return err
+			t.lastQueriedTxSignature = solana.Signature{}
 		}
 	}
 
-	t.chainHeadSlot = slot
-
-	return t.storage.StoreLatestBlockPoint(nil, bp)
+	return nil
 }
 
-func (t *EventTracker) processBlock(slot uint64, block *rpc.GetBlockResult) bool {
-	//nolint:godox
-	// TODO: We should also check whether any of the tracked programs was called via a CPI.
-	var eventFns []func(st store.StorageTransaction) error
-	// Store event details for post-commit notifications in transaction mode
-	var pendingNotifications []EventNotification
+// Fetches tx and does processing
+func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error {
+	if len(t.unprocessedTxSignatures) == 0 {
+		return nil
+	}
 
-	trackedInTx := make(map[solana.PublicKey]bool)
+	txSignature := t.unprocessedTxSignatures[0]
 
-	for txIndex, tx := range block.Transactions {
-		transaction, err := tx.GetTransaction()
-		if err != nil {
-			t.notify(ErrorNotification{
-				fmt.Errorf("failed to decode transaction %d: %w", txIndex+1, err), false})
+	t.logger.Debug("Fetching next full tx by signature", "tx signature", txSignature.String())
 
-			t.logger.Warn(fmt.Sprintf("Failed to decode transaction %d: %s", txIndex+1, err.Error()))
+	transactionResponse, err := t.client.GetTransaction(ctx, txSignature, &rpc.GetTransactionOpts{
+		Commitment:                     t.commitment,
+		MaxSupportedTransactionVersion: new(uint64),
+	})
+	if err != nil {
+		return err
+	}
 
-			continue
-		}
+	if transactionResponse == nil {
+		return fmt.Errorf("transaction not found")
+	}
 
-		t.logger.Info(fmt.Sprintf("Transaction %s processed", transaction.Signatures[0].String()))
+	if transactionResponse.Meta == nil {
+		return fmt.Errorf("cannot read meta data for the transaction")
+	}
 
-		hasTrackedProgram := false
+	if len(transactionResponse.Meta.LogMessages) == 0 {
+		t.logger.Warn("No log messages found for the transaction")
 
-		for programID := range t.trackedPrograms {
-			hasAccount, err := transaction.HasAccount(programID)
-			if err != nil {
-				// If we can't check if the transaction has the account
-				// we process the transaction just in case
-				hasTrackedProgram = true
+		return nil
+	}
 
-				continue
-			}
+	transaction, err := transactionResponse.Transaction.GetTransaction()
+	if err != nil {
+		return fmt.Errorf("failed to get transaction: %w", err)
+	}
 
-			if hasAccount {
-				hasTrackedProgram = true
-
-				break
-			}
-		}
-
-		if !hasTrackedProgram {
-			continue
-		}
-
-		if tx.Meta == nil {
-			t.notify(ErrorNotification{
-				fmt.Errorf("cannot read meta data for the transaction"), false})
-
-			t.logger.Warn("Cannot read meta data for the transaction")
+	// Processing loop:
+	for _, instruction := range transaction.Message.Instructions {
+		if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
+			t.logger.Warn(fmt.Sprintf("Invalid ProgramIDIndex in transaction %d (only %d accounts)",
+				instruction.ProgramIDIndex, len(transaction.Message.AccountKeys)))
 
 			continue
 		}
 
-		if len(tx.Meta.LogMessages) == 0 {
-			continue
-		}
-
-		var txSignature solana.Signature
-		if len(transaction.Signatures) > 0 {
-			txSignature = transaction.Signatures[0]
-		}
+		programID := transaction.Message.AccountKeys[instruction.ProgramIDIndex]
 
 		var innerActionHash [32]byte
 
-		for _, instruction := range transaction.Message.Instructions {
-			if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
-				t.logger.Warn(fmt.Sprintf("Invalid ProgramIDIndex %d in transaction %d (only %d accounts)",
-					instruction.ProgramIDIndex, txIndex+1, len(transaction.Message.AccountKeys)))
+		for _, log := range transactionResponse.Meta.LogMessages {
+			if !strings.Contains(log, "Program data: ") {
+				continue
+			}
+
+			// Extract base64 data
+			dataStart := strings.Index(log, "Program data: ")
+			if dataStart == -1 {
+				continue
+			}
+
+			base64Data := log[dataStart+14:] // len("Program data: ") = 14
+			base64Data = strings.TrimSpace(base64Data)
+			base64Data = strings.TrimRight(base64Data, "=") // Remove padding for RawStdEncoding
+
+			decoded, err := base64.RawStdEncoding.DecodeString(base64Data)
+			if err != nil {
+				return fmt.Errorf("failed to decode log: %w", err)
+			}
+
+			parsed, name, err := t.parseEvent(decoded, programID)
+			if err != nil {
+				t.logger.Warn(fmt.Sprintf("Failed to parse event: %s", err.Error()))
 
 				continue
 			}
 
-			programID := transaction.Message.AccountKeys[instruction.ProgramIDIndex]
-
-			if _, ok := t.trackedPrograms[programID]; ok {
-				trackedInTx[programID] = true
-			}
-
-			if _, ok := t.trackedPrograms[programID]; !ok {
+			if parsed == nil {
 				continue
 			}
 
-			for _, log := range tx.Meta.LogMessages {
-				if !strings.Contains(log, "Program data: ") {
-					continue
-				}
-
-				// Extract base64 data
-				dataStart := strings.Index(log, "Program data: ")
-				if dataStart == -1 {
-					continue
-				}
-
-				base64Data := log[dataStart+14:] // len("Program data: ") = 14
-				base64Data = strings.TrimSpace(base64Data)
-				base64Data = strings.TrimRight(base64Data, "=") // Remove padding for RawStdEncoding
-
-				decoded, err := base64.RawStdEncoding.DecodeString(base64Data)
+			// We have to recreate the payload to get the inner action hash
+			// that is the only way to map the payload hash from smart contract that oracle is expecting
+			// to the batch that was actually executed by relayer within this tx
+			if name == "TransactionExecutedEvent" {
+				ed25519Data, err := FindEd25519InstructionData(
+					transaction.Message.Instructions,
+					transaction.Message.AccountKeys,
+				)
 				if err != nil {
-					t.notify(ErrorNotification{
-						fmt.Errorf("failed to decode log: %w", err), false})
-
-					t.logger.Warn(fmt.Sprintf("Failed to decode log: %s", err.Error()))
+					t.logger.Warn(fmt.Sprintf(
+						"TransactionExecutedEvent in tx but no ed25519 instruction: %s",
+						err.Error()))
 
 					continue
 				}
 
-				// Try to parse with each tracked program in this transaction
-				for programID := range trackedInTx {
-					parsed, name, err := t.parseEvent(decoded, programID)
-					if err != nil {
-						t.notify(ErrorNotification{
-							fmt.Errorf("failed to parse event: %w", err), false})
+				payload, err := ExtractSolanaPayloadFromEd25519(ed25519Data)
+				if err != nil {
+					t.logger.Warn(fmt.Sprintf(
+						"Failed to extract solana payload from ed25519 instruction: %s", err.Error()))
 
-						t.logger.Warn(fmt.Sprintf("Failed to parse event: %s", err.Error()))
-
-						continue
-					}
-
-					if parsed == nil {
-						continue
-					}
-
-					// We have to recreate the payload to get the inner action hash
-					// that is the only way to map the payload hash from smart contract that oracle is expecting
-					// to the batch that was actually executed by relayer within this tx
-					if name == "TransactionExecutedEvent" {
-						ed25519Data, err := FindEd25519InstructionData(
-							transaction.Message.Instructions,
-							transaction.Message.AccountKeys,
-						)
-						if err != nil {
-							t.logger.Warn(fmt.Sprintf(
-								"TransactionExecutedEvent in tx %d but no ed25519 instruction: %s",
-								txIndex+1, err.Error()))
-
-							continue
-						}
-
-						payload, err := ExtractSolanaPayloadFromEd25519(ed25519Data)
-						if err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to extract solana payload from ed25519 instruction: %w", err), false})
-
-							t.logger.Warn(fmt.Sprintf(
-								"Failed to extract solana payload from ed25519 instruction: %s", err.Error()))
-
-							continue
-						}
-
-						payloadBytes, err := payload.Marshal()
-						if err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to marshal payload: %w", err), false})
-
-							t.logger.Warn(fmt.Sprintf("Failed to marshal payload: %s", err.Error()))
-
-							continue
-						}
-
-						innerActionHash = sha256.Sum256(payloadBytes)
-					}
-
-					// Found a matching event!
-					if t.applyTx {
-						pendingNotifications = append(pendingNotifications, EventNotification{
-							SlotNumber:      slot,
-							TxSignature:     txSignature,
-							InnerActionHash: innerActionHash,
-							Program:         programID,
-							EventName:       name,
-							EventData:       parsed,
-						})
-
-						eventFns = append(eventFns, func(st store.StorageTransaction) error {
-							return t.storage.StoreEvent(
-								st,
-								slot,
-								txSignature,
-								programID,
-								name,
-								innerActionHash,
-								parsed,
-							)
-						})
-					} else {
-						if err := t.storage.StoreEvent(nil, slot, txSignature, programID, name, innerActionHash, parsed); err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to store event: %w", err), true})
-
-							t.logger.Error(fmt.Sprintf("Failed to store event: %s", err.Error()))
-
-							t.terminate()
-
-							return false
-						}
-
-						t.notify(EventNotification{
-							SlotNumber:      slot,
-							TxSignature:     txSignature,
-							InnerActionHash: innerActionHash,
-							Program:         programID,
-							EventName:       name,
-							EventData:       parsed,
-						})
-
-						t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d", name, programID, slot))
-					}
-
-					if str, ok := parsed.(interface {
-						String(uint64, solana.PublicKey) string
-					}); t.eventSink != nil && ok {
-						if _, err := t.eventSink.Write([]byte(str.String(slot, programID))); err != nil {
-							t.notify(ErrorNotification{
-								fmt.Errorf("failed to write in event sink: %w", err), false})
-
-							t.logger.Warn(fmt.Sprintf("Failed to write in event sink: %s", err.Error()))
-						}
-					}
-
-					break // Found the correct program, no need to try others
+					continue
 				}
+
+				payloadBytes, err := payload.Marshal()
+				if err != nil {
+					t.logger.Warn(fmt.Sprintf("Failed to marshal payload: %s", err.Error()))
+
+					continue
+				}
+
+				innerActionHash = sha256.Sum256(payloadBytes)
+			}
+
+			event := EventNotification{
+				SlotNumber:      transactionResponse.Slot,
+				TxSignature:     txSignature,
+				InnerActionHash: innerActionHash,
+				Program:         programID,
+				EventName:       name,
+				EventData:       parsed,
+			}
+
+			err = t.EventSubscriber.AddEvent(event)
+			if err != nil {
+				return fmt.Errorf("failed to add event: %w", err)
+			}
+
+			t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d", name, programID, transactionResponse.Slot))
+
+			err = t.storage.StoreEvent(
+				nil,
+				event.SlotNumber,
+				event.TxSignature,
+				event.Program,
+				event.EventName,
+				event.InnerActionHash,
+				event.EventData,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to store event: %w", err)
+			}
+
+			// After the tx is processed we can mark the blocks through the tx slot as processed
+			// these are used later for checking if the tx is expired on oracle
+			err = t.storage.MarkBlocksProcessedThroughSlot(event.SlotNumber)
+			if err != nil {
+				return fmt.Errorf("failed to mark processed blocks through slot %d: %w", event.SlotNumber, err)
 			}
 		}
 	}
 
-	if t.applyTx {
-		slotFn := func(st store.StorageTransaction) error {
-			return t.storage.StoreSlot(
-				st,
-				slot,
-			)
-		}
-
-		if err := t.storage.ApplyTransaction(slotFn, eventFns); err != nil {
-			t.notify(ErrorNotification{
-				fmt.Errorf("failed to apply storage transaction: %w", err), true})
-
-			t.logger.Error(fmt.Sprintf("Failed to apply storage transaction: %s", err.Error()))
-
-			t.terminate()
-
-			return false
-		}
-
-		// Send notifications AFTER successful transaction commit
-		for _, notification := range pendingNotifications {
-			t.notify(notification)
-			t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d",
-				notification.EventName, notification.Program, notification.SlotNumber))
-		}
-
-		t.logger.Debug(fmt.Sprintf("Successfully stored %d events for slot %d", len(eventFns), slot))
-
-		return true
+	err = t.storage.SetLastProcessedTransaction(txSignature)
+	if err != nil {
+		return fmt.Errorf("failed to set last processed transaction: %w", err)
 	}
 
-	if err := t.storage.StoreSlot(nil, slot); err != nil {
-		t.notify(ErrorNotification{
-			fmt.Errorf("failed to store slot: %w", err), true})
-
-		t.logger.Error(fmt.Sprintf("Failed to store slot: %s", err.Error()))
-
-		t.terminate()
-
-		return false
+	err = t.storage.RemoveProcessedTransaction(txSignature)
+	if err != nil {
+		return fmt.Errorf("failed to remove processed transaction: %w", err)
 	}
 
-	return true
+	t.lastProcessedTxSignature = txSignature
+	t.unprocessedTxSignatures = t.unprocessedTxSignatures[1:]
+
+	return nil
+}
+
+// Helper function to get signatures for an address
+// If the last queried tx signature is empty, we query from the beginning
+// If it's not empty, we query until the last queried tx signature
+// Passing solana.Signature{} doens't work
+func (t *EventTracker) getSignaturesForAddressHelper(
+	ctx context.Context, programID solana.PublicKey,
+) ([]*rpc.TransactionSignature, error) {
+	if t.lastQueriedTxSignature == (solana.Signature{}) {
+		return t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
+			Commitment: t.commitment,
+		})
+	} else {
+		return t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
+			Until:      t.lastQueriedTxSignature,
+			Commitment: t.commitment,
+		})
+	}
+}
+
+func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, programID solana.PublicKey) error {
+	t.logger.Debug("Fetching new transactions", "last queried tx signature", t.lastQueriedTxSignature.String())
+
+	// Query until the last processed signature
+	txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID)
+	if err != nil {
+		return err
+	}
+
+	if len(txSignatures) == 0 {
+		t.logger.Debug("No new transactions found")
+
+		return nil
+	}
+
+	t.logger.Debug("Fetched new transactions",
+		"count", len(txSignatures),
+		"last queried tx signature", t.lastQueriedTxSignature.String())
+
+	if len(txSignatures) == 0 {
+		return nil
+	}
+
+	if len(txSignatures) == getSignaturesForAddressMaxLimit {
+		// We have to fetch what was before the last processed signature
+		// since the initial query returned the max limit of signatures
+		signatures, err := t.catchUpLoop(ctx, programID, txSignatures[len(txSignatures)-1].Signature)
+		if err != nil {
+			return err
+		}
+
+		txSignatures = append(txSignatures, signatures...)
+	}
+
+	// Since signatures are queried in reverse order, we need to store them in
+	// reverse order to get the correct order for processing
+
+	for i := len(txSignatures) - 1; i >= 0; i-- {
+		// If the last queried tx signature is empty, we need to check if the tx slot is greater than the chain head slot
+		// if it is, we skip the tx
+		// important for the first run
+		if t.lastQueriedTxSignature == (solana.Signature{}) {
+			if t.chainHeadSlot > txSignatures[i].Slot {
+				continue
+			}
+		}
+
+		t.unprocessedTxSignatures = append(t.unprocessedTxSignatures, txSignatures[i].Signature)
+	}
+
+	// If we skipped all the txs, we need to set the last queried tx signature to the newest one
+	if len(t.unprocessedTxSignatures) == 0 {
+		t.lastQueriedTxSignature = txSignatures[0].Signature
+
+		return nil
+	}
+
+	err = t.storage.PushUnprocessedTransactions(t.unprocessedTxSignatures)
+	if err != nil {
+		return fmt.Errorf("failed to push unprocessed transactions: %w", err)
+	}
+
+	t.lastQueriedTxSignature = txSignatures[0].Signature
+
+	t.logger.Debug("Fetched new transactions", "count",
+		len(txSignatures), "last queried tx signature", t.lastQueriedTxSignature.String())
+
+	return nil
+}
+
+func (t *EventTracker) catchUpLoop(
+	ctx context.Context, programID solana.PublicKey, lastQueriedTxSignature solana.Signature,
+) (signatures []*rpc.TransactionSignature, err error) {
+	t.logger.Debug("Catching up loop", "last processed tx signature", lastQueriedTxSignature.String())
+
+	for {
+		txSignatures, err := t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
+			Before:     lastQueriedTxSignature,
+			Commitment: t.commitment,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		signatures = append(signatures, txSignatures...)
+
+		if len(txSignatures) < getSignaturesForAddressMaxLimit {
+			break
+		}
+	}
+
+	t.logger.Debug("Caught up old transactions", "count", len(signatures))
+
+	return signatures, nil
 }
 
 func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) (any, string, error) {
@@ -1101,63 +569,8 @@ func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) 
 	return nil, "", nil
 }
 
-// helper that checks if the error indicates a skipped/missing slot
-func isSkippedSlotError(err error) bool {
-	errStr := err.Error()
-
-	return strings.Contains(errStr, "-32007") ||
-		strings.Contains(errStr, "was skipped") ||
-		strings.Contains(errStr, "missing due to ledger jump")
-}
-
-// isBlockNotAvailableForSlotError detects RPC -32004 (and matching message) when getBlock has
-// nothing to return for this slot. Without handling it, the tracker would retry the same slot
-// forever because err.Error() is a spew dump and does not match isSkippedSlotError.
-func isBlockNotAvailableForSlotError(err error, slot uint64) bool {
-	want := fmt.Sprintf("Block not available for slot %d", slot)
-
-	var rpcErr *jsonrpc.RPCError
-	if errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Message != "" {
-		return rpcErr.Code == -32004 && strings.Contains(rpcErr.Message, want)
-	}
-
-	// RPCError.Error() is a spew dump; require code in the dump when Message path did not apply.
-	errStr := err.Error()
-
-	return strings.Contains(errStr, want) && strings.Contains(errStr, "-32004")
-}
-
-func isCleanedUpBlockError(err error, slot uint64) (bool, uint64) {
-	msg := err.Error()
-
-	var rpcErr *jsonrpc.RPCError
-
-	if errors.As(err, &rpcErr) && rpcErr != nil && rpcErr.Message != "" {
-		msg = rpcErr.Message
-	}
-
-	prefix := fmt.Sprintf("Block %d cleaned up, does not exist on node.", slot)
-	if !strings.Contains(msg, prefix) {
-		return false, 0
-	}
-
-	const marker = "First available block: "
-
-	idx := strings.LastIndex(msg, marker)
-	if idx < 0 {
-		return false, 0
-	}
-
-	firstAvailableBlock, parseErr := strconv.ParseUint(strings.TrimSpace(msg[idx+len(marker):]), 10, 64)
-	if parseErr != nil {
-		return false, 0
-	}
-
-	return true, firstAvailableBlock
-}
-
 // setupClient initialises config.Client if it is not already set.
-func setupClient(config *EventTrackerConfig) error {
+func setupClientNew(config *EventTrackerConfig) error {
 	if config.Client != nil {
 		return nil
 	}
@@ -1169,4 +582,111 @@ func setupClient(config *EventTrackerConfig) error {
 	config.Client = rpc.New(config.RPCEndpoint)
 
 	return nil
+}
+
+// Helper function to get slots to query blocks
+// We need to query blocks at slots that are multiples of the threshold
+// and the next slot is not a multiple of the threshold
+func getSlotsToQueryBlocks(slotsWithBlocks []uint64, threshold uint64) []uint64 {
+	result := make([]uint64, 0)
+
+	for i := 0; i < len(slotsWithBlocks); i++ {
+		if slotsWithBlocks[i]%threshold == 0 {
+			result = append(result, slotsWithBlocks[i])
+		} else if i+1 < len(slotsWithBlocks) &&
+			slotsWithBlocks[i+1]/threshold != slotsWithBlocks[i]/threshold &&
+			slotsWithBlocks[i+1]%threshold != 0 { // next will add itself, don't add current
+			result = append(result, slotsWithBlocks[i])
+		}
+	}
+
+	return result
+}
+
+// refreshChainHead fetches the block at the given slot and persists it as the
+// latest block point. If the slot has no block (skipped/empty), the update is
+// silently skipped and the previously stored chain head remains valid.
+// Only storage write errors are returned; RPC/fetch failures are non-fatal.
+func (t *EventTracker) refreshChainHead(ctx context.Context) error {
+	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", t.chainHeadSlot))
+
+	var (
+		startSlot uint64
+		endSlot   uint64
+		err       error
+	)
+
+	startSlot = t.chainHeadSlot
+	endSlot = t.chainHeadSlot + t.chainHeadSlotOffset
+
+	slotsWithBlocks, err := t.client.GetBlocks(ctx, startSlot, &endSlot, rpc.CommitmentConfirmed)
+	if err != nil {
+		t.logger.Warn(fmt.Sprintf("Failed to fetch blocks with limit to refresh head %d: %s", endSlot, err.Error()))
+
+		return nil
+	}
+
+	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
+		10, endSlot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
+
+	if len(slotsWithBlocks) == 0 {
+		return nil
+	}
+
+	var bp store.BlockPoint
+
+	slotsToQueryBlocks := getSlotsToQueryBlocks(slotsWithBlocks, t.blockRoundingThreshold)
+
+	t.logger.Debug("Slots to query blocks", "count", len(slotsToQueryBlocks), "slots", slotsToQueryBlocks)
+
+	for _, slot := range slotsToQueryBlocks {
+		if slot == t.chainHeadSlot {
+			continue
+		}
+
+		block, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
+			TransactionDetails:             rpc.TransactionDetailsNone,
+			MaxSupportedTransactionVersion: new(uint64),
+			Commitment:                     rpc.CommitmentConfirmed,
+		})
+		if err != nil {
+			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
+
+			continue
+		}
+
+		if block == nil {
+			t.logger.Warn(fmt.Sprintf("No block found at slot %d", slot))
+
+			continue
+		}
+
+		var blockNumber uint64
+		if block.BlockHeight != nil {
+			blockNumber = *block.BlockHeight
+		} else {
+			t.logger.Warn(fmt.Sprintf("No block height found for block at slot %d", slot))
+		}
+
+		bp = store.BlockPoint{
+			BlockSlot:   slot,
+			BlockHash:   block.Blockhash,
+			BlockNumber: blockNumber,
+			Processed:   t.lastProcessedTxSignature == t.lastQueriedTxSignature,
+		}
+
+		if err := t.storage.StoreBlock(nil, bp); err != nil {
+			return err
+		}
+
+		t.logger.Debug("Stored block",
+			"slot", slot,
+			"hash", block.Blockhash,
+			"number", blockNumber,
+			"processed", bp.Processed)
+
+		t.chainHeadSlot = slot
+	}
+
+	return t.storage.StoreLatestBlockPoint(nil, bp)
 }

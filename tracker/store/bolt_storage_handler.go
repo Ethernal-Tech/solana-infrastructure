@@ -69,6 +69,10 @@ type StorageHandler interface {
 	// GetLatestProcessedBlockPoint returns the latest processed block point data.
 	GetLatestProcessedBlockPoint() (*BlockPoint, error)
 
+	// MarkBlocksProcessedThroughSlot marks already stored blocks as processed from the next
+	// unprocessed block up to and including targetSlot.
+	MarkBlocksProcessedThroughSlot(targetSlot uint64) error
+
 	// GetEventsBySlot returns all tracked events stored for the given slot, from both the
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
@@ -107,7 +111,17 @@ type StorageHandler interface {
 	// operation fails. If this method returns an error, the tracker will terminate immediately.
 	ApplyTransaction(func(StorageTransaction) error, []func(StorageTransaction) error) error
 
+	TxStorageHandler
+
 	Close() error
+}
+
+type TxStorageHandler interface {
+	PushUnprocessedTransactions(txSignatures []solana.Signature) error
+	RemoveProcessedTransaction(txSignature solana.Signature) error
+	GetAllUnprocessedTransactions() ([]solana.Signature, error)
+	SetLastProcessedTransaction(txSignature solana.Signature) error
+	GetLastProcessedTransaction() (solana.Signature, error)
 }
 
 type BoltStorageHandler struct {
@@ -136,16 +150,22 @@ type BlockPoint struct {
 }
 
 var (
-	slotBucket              = []byte("slot")
-	blocksBucket            = []byte("blocks")
-	blockHashToNumberBucket = []byte("block_hash_to_number")
-	latestBlockPointBucket  = []byte("latestBlockPoint")
-	unprocessedEventsBucket = []byte("unprocessed_events")
-	processedEventsBucket   = []byte("processed_events")
-	eventIDCounterBucket    = []byte("event_id_counter")
+	slotBucket                    = []byte("slot")
+	blocksBucket                  = []byte("blocks")
+	blockHashToNumberBucket       = []byte("block_hash_to_number")
+	latestBlockPointBucket        = []byte("latestBlockPoint")
+	unprocessedEventsBucket       = []byte("unprocessed_events")
+	processedEventsBucket         = []byte("processed_events")
+	eventIDCounterBucket          = []byte("event_id_counter")
+	unprocessedTxSignaturesBucket = []byte("unprocessed_tx_signatures")
 
 	currentSlotKey      = []byte("current")
 	latestBlockPointKey = []byte("latestBlockPointKey")
+
+	unprocessedTxQueueHeadKey      = []byte("head")
+	unprocessedTxQueueTailKey      = []byte("tail")
+	unprocessedTxSignaturesListKey = []byte("list") // legacy; migrated on access
+	lastProcessedTxSignatureKey    = []byte("last_processed")
 )
 
 func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error) {
@@ -191,6 +211,11 @@ func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error
 		_, err = tx.CreateBucketIfNotExists(eventIDCounterBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the event ID counter bucket: %w", err)
+		}
+
+		_, err = tx.CreateBucketIfNotExists(unprocessedTxSignaturesBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the unprocessed tx signatures bucket: %w", err)
 		}
 
 		return nil
@@ -542,6 +567,74 @@ func (b *BoltStorageHandler) GetLatestProcessedBlockPoint() (*BlockPoint, error)
 	return result, nil
 }
 
+func (b *BoltStorageHandler) MarkBlocksProcessedThroughSlot(targetSlot uint64) error {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(blocksBucket)
+		if bucket == nil {
+			return fmt.Errorf("cannot find blocks bucket")
+		}
+
+		cursor := bucket.Cursor()
+		startSlot := uint64(0)
+
+		seekKey := encodeUint64(targetSlot)
+		k, v := cursor.Seek(seekKey)
+
+		if k == nil {
+			k, v = cursor.Last()
+		} else if decodeUint64(k) > targetSlot {
+			k, v = cursor.Prev()
+		}
+
+		for ; k != nil; k, v = cursor.Prev() {
+			slot := decodeUint64(k)
+			if slot > targetSlot {
+				continue
+			}
+
+			var entry BlockPoint
+			if err := json.Unmarshal(v, &entry); err != nil {
+				return fmt.Errorf("cannot unmarshal block point at slot %d: %w", slot, err)
+			}
+
+			if entry.Processed {
+				startSlot = slot + 1
+
+				break
+			}
+		}
+
+		for k, v = cursor.Seek(encodeUint64(startSlot)); k != nil; k, v = cursor.Next() {
+			slot := decodeUint64(k)
+			if slot > targetSlot {
+				break
+			}
+
+			var entry BlockPoint
+			if err := json.Unmarshal(v, &entry); err != nil {
+				return fmt.Errorf("cannot unmarshal block point at slot %d: %w", slot, err)
+			}
+
+			if entry.Processed {
+				continue
+			}
+
+			entry.Processed = true
+
+			data, err := json.Marshal(entry)
+			if err != nil {
+				return fmt.Errorf("cannot marshal processed block point at slot %d: %w", slot, err)
+			}
+
+			if err := bucket.Put(k, data); err != nil {
+				return fmt.Errorf("cannot update processed flag at slot %d: %w", slot, err)
+			}
+		}
+
+		return nil
+	})
+}
+
 func (b *BoltStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {
 	var result *BlockPoint
 
@@ -591,91 +684,260 @@ func (b *BoltStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 	return results, nil
 }
 
-// Retrieves up to N unprocessed events in order (by event ID)
-func (b *BoltStorageHandler) GetUnprocessedEvents(limit int) ([]EventRecord, error) {
-	var results []EventRecord
+// txQueueBounds tracks a FIFO queue stored as encodeUint64(index) -> signature bytes.
+// head is the index of the front element; tail is one past the last element.
+type txQueueBounds struct {
+	head uint64
+	tail uint64
+}
 
-	err := b.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(unprocessedEventsBucket)
-		if bucket == nil {
-			return nil // No unprocessed events bucket yet
+func (b *BoltStorageHandler) unprocessedTxSignaturesBucket(tx *bolt.Tx) (*bolt.Bucket, error) {
+	bucket := tx.Bucket(unprocessedTxSignaturesBucket)
+	if bucket == nil {
+		return nil, fmt.Errorf("unprocessed tx signatures bucket not found")
+	}
+
+	return bucket, nil
+}
+
+func (b *BoltStorageHandler) loadTxQueueBounds(bucket *bolt.Bucket) (txQueueBounds, error) {
+	var bounds txQueueBounds
+
+	if v := bucket.Get(unprocessedTxQueueHeadKey); v != nil {
+		bounds.head = decodeUint64(v)
+	}
+
+	if v := bucket.Get(unprocessedTxQueueTailKey); v != nil {
+		bounds.tail = decodeUint64(v)
+	}
+
+	return bounds, nil
+}
+
+func (b *BoltStorageHandler) storeTxQueueHead(bucket *bolt.Bucket, head uint64) error {
+	return bucket.Put(unprocessedTxQueueHeadKey, encodeUint64(head))
+}
+
+func (b *BoltStorageHandler) storeTxQueueTail(bucket *bolt.Bucket, tail uint64) error {
+	return bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail))
+}
+
+// migrateLegacyTxQueueList converts the old single-key JSON list into index-keyed entries.
+func (b *BoltStorageHandler) migrateLegacyTxQueueList(bucket *bolt.Bucket) error {
+	if bucket.Get(unprocessedTxQueueHeadKey) != nil || bucket.Get(unprocessedTxQueueTailKey) != nil {
+		return nil
+	}
+
+	data := bucket.Get(unprocessedTxSignaturesListKey)
+	if data == nil {
+		return nil
+	}
+
+	var sigStrings []string
+	if err := json.Unmarshal(data, &sigStrings); err != nil {
+		return fmt.Errorf("cannot unmarshal legacy unprocessed tx signatures: %w", err)
+	}
+
+	var tail uint64
+
+	for i, s := range sigStrings {
+		sig, err := solana.SignatureFromBase58(s)
+		if err != nil {
+			return fmt.Errorf("invalid legacy tx signature at index %d: %w", i, err)
 		}
 
-		cursor := bucket.Cursor()
-		count := 0
+		if err := bucket.Put(encodeUint64(tail), sig[:]); err != nil {
+			return fmt.Errorf("cannot migrate legacy tx signature at index %d: %w", i, err)
+		}
 
-		// Iterate in order (keys are sorted by default in BoltDB)
-		for k, v := cursor.First(); k != nil && count < limit; k, v = cursor.Next() {
-			var record EventRecord
-			if err := json.Unmarshal(v, &record); err != nil {
-				return fmt.Errorf("failed to unmarshal event record: %w", err)
+		tail++
+	}
+
+	if err := bucket.Delete(unprocessedTxSignaturesListKey); err != nil {
+		return fmt.Errorf("cannot delete legacy unprocessed tx signatures list: %w", err)
+	}
+
+	if tail == 0 {
+		return nil
+	}
+
+	if err := bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail)); err != nil {
+		return err
+	}
+
+	return bucket.Put(unprocessedTxQueueHeadKey, encodeUint64(0))
+}
+
+func signatureFromBucketValue(data []byte) (solana.Signature, error) {
+	if len(data) != len(solana.Signature{}) {
+		return solana.Signature{}, fmt.Errorf("invalid signature length %d", len(data))
+	}
+
+	var sig solana.Signature
+
+	copy(sig[:], data)
+
+	return sig, nil
+}
+
+func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.Signature) error {
+	if len(txSignatures) == 0 {
+		return nil
+	}
+
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
+			return err
+		}
+
+		bounds, err := b.loadTxQueueBounds(bucket)
+		if err != nil {
+			return err
+		}
+
+		for _, sig := range txSignatures {
+			if err := bucket.Put(encodeUint64(bounds.tail), sig[:]); err != nil {
+				return fmt.Errorf("cannot store unprocessed tx signature: %w", err)
 			}
 
-			results = append(results, record)
-			count++
+			bounds.tail++
 		}
 
-		return nil
+		return b.storeTxQueueTail(bucket, bounds.tail)
 	})
-
-	return results, err
 }
 
-// Moves an event from unprocessed to processed bucket
-func (b *BoltStorageHandler) MarkEventAsProcessed(eventID uint64) error {
+func (b *BoltStorageHandler) RemoveProcessedTransaction(txSignature solana.Signature) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
-		unprocessedBucket := tx.Bucket(unprocessedEventsBucket)
-		if unprocessedBucket == nil {
-			return fmt.Errorf("unprocessed events bucket not found")
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
 		}
 
-		processedBucket := tx.Bucket(processedEventsBucket)
-		if processedBucket == nil {
-			return fmt.Errorf("processed events bucket not found")
+		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
+			return err
 		}
 
-		// Get event from unprocessed bucket
-		eventKey := encodeUint64(eventID)
-
-		eventData := unprocessedBucket.Get(eventKey)
-		if eventData == nil {
-			return fmt.Errorf("event with ID %d not found in unprocessed bucket", eventID)
+		bounds, err := b.loadTxQueueBounds(bucket)
+		if err != nil {
+			return err
 		}
 
-		// Move to processed bucket
-		if err := processedBucket.Put(eventKey, eventData); err != nil {
-			return fmt.Errorf("failed to store event in processed bucket: %w", err)
+		if bounds.head >= bounds.tail {
+			return fmt.Errorf("no unprocessed transactions to remove")
 		}
 
-		// Remove from unprocessed bucket
-		if err := unprocessedBucket.Delete(eventKey); err != nil {
-			return fmt.Errorf("failed to delete event from unprocessed bucket: %w", err)
+		headKey := encodeUint64(bounds.head)
+
+		front, err := signatureFromBucketValue(bucket.Get(headKey))
+		if err != nil {
+			return fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", bounds.head, err)
 		}
 
-		return nil
+		if front != txSignature {
+			return fmt.Errorf(
+				"transaction %s is not at the front of the unprocessed queue (front is %s)",
+				txSignature, front,
+			)
+		}
+
+		if err := bucket.Delete(headKey); err != nil {
+			return fmt.Errorf("cannot remove unprocessed tx signature: %w", err)
+		}
+
+		return b.storeTxQueueHead(bucket, bounds.head+1)
 	})
 }
 
-// Returns the number of unprocessed events
-func (b *BoltStorageHandler) GetUnprocessedEventCount() (int, error) {
-	return b.bucketKeyCount(unprocessedEventsBucket)
+func (b *BoltStorageHandler) ensureTxQueueMigrated() error {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		return b.migrateLegacyTxQueueList(bucket)
+	})
 }
 
-// Returns the number of processed events
-func (b *BoltStorageHandler) GetProcessedEventCount() (int, error) {
-	return b.bucketKeyCount(processedEventsBucket)
-}
+func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature, error) {
+	if err := b.ensureTxQueueMigrated(); err != nil {
+		return nil, err
+	}
 
-func (b *BoltStorageHandler) bucketKeyCount(name []byte) (int, error) {
-	var count int
+	var result []solana.Signature
 
 	err := b.db.View(func(tx *bolt.Tx) error {
-		if bucket := tx.Bucket(name); bucket != nil {
-			count = bucket.Stats().KeyN
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		bounds, err := b.loadTxQueueBounds(bucket)
+		if err != nil {
+			return err
+		}
+
+		if bounds.tail < bounds.head {
+			return fmt.Errorf("corrupt unprocessed tx queue: tail %d < head %d", bounds.tail, bounds.head)
+		}
+
+		count := bounds.tail - bounds.head
+		if count == 0 {
+			return nil
+		}
+
+		result = make([]solana.Signature, 0, count)
+
+		for i := bounds.head; i < bounds.tail; i++ {
+			sig, err := signatureFromBucketValue(bucket.Get(encodeUint64(i)))
+			if err != nil {
+				return fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", i, err)
+			}
+
+			result = append(result, sig)
 		}
 
 		return nil
 	})
 
-	return count, err
+	return result, err
+}
+
+func (b *BoltStorageHandler) SetLastProcessedTransaction(txSignature solana.Signature) error {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		return bucket.Put(lastProcessedTxSignatureKey, txSignature[:])
+	})
+}
+
+func (b *BoltStorageHandler) GetLastProcessedTransaction() (solana.Signature, error) {
+	var sig solana.Signature
+
+	err := b.db.View(func(tx *bolt.Tx) error {
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		data := bucket.Get(lastProcessedTxSignatureKey)
+		if data == nil {
+			return nil
+		}
+
+		sig, err = signatureFromBucketValue(data)
+
+		return err
+	})
+
+	return sig, err
 }

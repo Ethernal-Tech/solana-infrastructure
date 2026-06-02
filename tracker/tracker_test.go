@@ -1,59 +1,53 @@
 package tracker
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
-	"github.com/test-go/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestIsCleanedUpBlockError_JSONRPCError(t *testing.T) {
-	// gagliardetto's RPCError.Error() spew-dumps the struct; detection must use Message, not err.Error().
-	err := &jsonrpc.RPCError{
-		Code:    -32001,
-		Message: "Block 516 cleaned up, does not exist on node. First available block: 517",
-	}
-	ok, firstAvail := isCleanedUpBlockError(err, 516)
-	assert.True(t, ok)
-	assert.Equal(t, uint64(517), firstAvail)
+func TestGetSlotsToQueryBlocks(t *testing.T) {
+	t.Parallel()
 
-	ok, _ = isCleanedUpBlockError(err, 517)
-	assert.False(t, ok, "wrong slot should not match")
-}
-
-func TestIsCleanedUpBlockError_WrappedRPCError(t *testing.T) {
-	inner := &jsonrpc.RPCError{
-		Code:    -32001,
-		Message: "Block 516 cleaned up, does not exist on node. First available block: 517",
+	testCases := []struct {
+		name      string
+		input     []uint64
+		threshold uint64
+		expected  []uint64
+	}{
+		{
+			name:      "includes exact threshold slots",
+			input:     []uint64{100, 101, 102, 200, 201, 300},
+			threshold: 100,
+			expected:  []uint64{100, 200, 300},
+		},
+		{
+			name:      "includes last block before next threshold when boundary slot missing",
+			input:     []uint64{95, 99, 101, 150, 199, 205},
+			threshold: 100,
+			expected:  []uint64{99, 199},
+		},
+		{
+			name:      "does not duplicate when next slot is exact threshold",
+			input:     []uint64{98, 99, 100, 101},
+			threshold: 100,
+			expected:  []uint64{100},
+		},
+		{
+			name:      "empty input",
+			input:     []uint64{},
+			threshold: 100,
+			expected:  []uint64{},
+		},
 	}
-	ok, firstAvail := isCleanedUpBlockError(fmt.Errorf("get block: %w", inner), 516)
-	assert.True(t, ok)
-	assert.Equal(t, uint64(517), firstAvail)
-}
 
-func TestIsBlockNotAvailableForSlotError_JSONRPCError(t *testing.T) {
-	err := &jsonrpc.RPCError{
-		Code:    -32004,
-		Message: "Block not available for slot 514",
-	}
-	assert.True(t, isBlockNotAvailableForSlotError(err, 514))
-	assert.False(t, isBlockNotAvailableForSlotError(err, 515), "slot in message must match")
-}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestIsBlockNotAvailableForSlotError_WrappedRPCError(t *testing.T) {
-	inner := &jsonrpc.RPCError{
-		Code:    -32004,
-		Message: "Block not available for slot 514",
+			result := getSlotsToQueryBlocks(tc.input, tc.threshold)
+			require.Equal(t, tc.expected, result)
+		})
 	}
-	assert.True(t, isBlockNotAvailableForSlotError(fmt.Errorf("get block: %w", inner), 514))
-}
-
-func TestIsBlockNotAvailableForSlotError_WrongRPCCode(t *testing.T) {
-	// Same wording but different code must not count as block-not-available.
-	err := &jsonrpc.RPCError{
-		Code:    -32007,
-		Message: "Block not available for slot 514",
-	}
-	assert.False(t, isBlockNotAvailableForSlotError(err, 514))
 }

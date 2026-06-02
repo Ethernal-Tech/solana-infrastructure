@@ -91,6 +91,12 @@ func (m *MockStorageHandler) GetLatestProcessedBlockPoint() (*BlockPoint, error)
 	return args.Get(0).(*BlockPoint), args.Error(1)
 }
 
+func (m *MockStorageHandler) MarkBlocksProcessedThroughSlot(targetSlot uint64) error {
+	args := m.Called(targetSlot)
+
+	return args.Error(0)
+}
+
 func (m *MockStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error) {
 	args := m.Called(slot)
 
@@ -105,12 +111,6 @@ func (m *MockStorageHandler) GetUnprocessedEvents(limit int) ([]EventRecord, err
 	return args.Get(0).([]EventRecord), args.Error(1)
 }
 
-func (m *MockStorageHandler) MarkEventAsProcessed(eventID uint64) error {
-	args := m.Called(eventID)
-
-	return args.Error(0)
-}
-
 func (m *MockStorageHandler) GetUnprocessedEventCount() (int, error) {
 	args := m.Called()
 
@@ -123,4 +123,36 @@ func (m *MockStorageHandler) GetProcessedEventCount() (int, error) {
 
 	//nolint:forcetypeassert
 	return args.Get(0).(int), args.Error(1)
+}
+
+func (m *MockStorageHandler) PushUnprocessedTransactions(txSignatures []solana.Signature) error {
+	args := m.Called(txSignatures)
+
+	return args.Error(0)
+}
+
+func (m *MockStorageHandler) RemoveProcessedTransaction(txSignature solana.Signature) error {
+	args := m.Called(txSignature)
+
+	return args.Error(0)
+}
+
+func (m *MockStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature, error) {
+	args := m.Called()
+
+	//nolint:forcetypeassert
+	return args.Get(0).([]solana.Signature), args.Error(1)
+}
+
+func (m *MockStorageHandler) SetLastProcessedTransaction(txSignature solana.Signature) error {
+	args := m.Called(txSignature)
+
+	return args.Error(0)
+}
+
+func (m *MockStorageHandler) GetLastProcessedTransaction() (solana.Signature, error) {
+	args := m.Called()
+
+	//nolint:forcetypeassert
+	return args.Get(0).(solana.Signature), args.Error(1)
 }
