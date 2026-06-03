@@ -219,7 +219,7 @@ func (t *EventTracker) getLastUnprocessedTxSignature() (solana.Signature, error)
 		return lastProcessedTxSignature, nil
 	}
 
-	return unprocessedTxSignatures[len(unprocessedTxSignatures)-1], nil
+	return unprocessedTxSignatures[0], nil
 }
 
 // Initialization on startup
