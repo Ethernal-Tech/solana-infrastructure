@@ -66,13 +66,6 @@ type StorageHandler interface {
 	// GetLatestBlockPoint returns the latest block point data, i.e. block slot and block hash.
 	GetLatestBlockPoint() (*BlockPoint, error)
 
-	// GetLatestProcessedBlockPoint returns the latest processed block point data.
-	GetLatestProcessedBlockPoint() (*BlockPoint, error)
-
-	// MarkBlocksProcessedThroughSlot marks already stored blocks as processed from the next
-	// unprocessed block up to and including targetSlot.
-	MarkBlocksProcessedThroughSlot(targetSlot uint64) error
-
 	// GetEventsBySlot returns all tracked events stored for the given slot, from both the
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
@@ -125,6 +118,8 @@ type TxStorageHandler interface {
 	// FinalizeProcessedTransaction atomically removes txSignature from the front of the
 	// unprocessed queue and stores it as the last processed transaction.
 	FinalizeProcessedTransaction(txSignature solana.Signature) error
+	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
+	GetLatestFinalizedBlockNumber() (uint64, error)
 }
 
 type BoltStorageHandler struct {
@@ -149,18 +144,18 @@ type BlockPoint struct {
 	BlockSlot   uint64      `json:"slot"`
 	BlockHash   solana.Hash `json:"hash"`
 	BlockNumber uint64      `json:"number"`
-	Processed   bool        `json:"processed"`
 }
 
 var (
-	slotBucket                    = []byte("slot")
-	blocksBucket                  = []byte("blocks")
-	blockHashToNumberBucket       = []byte("block_hash_to_number")
-	latestBlockPointBucket        = []byte("latestBlockPoint")
-	unprocessedEventsBucket       = []byte("unprocessed_events")
-	processedEventsBucket         = []byte("processed_events")
-	eventIDCounterBucket          = []byte("event_id_counter")
-	unprocessedTxSignaturesBucket = []byte("unprocessed_tx_signatures")
+	slotBucket                       = []byte("slot")
+	blocksBucket                     = []byte("blocks")
+	blockHashToNumberBucket          = []byte("block_hash_to_number")
+	latestBlockPointBucket           = []byte("latestBlockPoint")
+	unprocessedEventsBucket          = []byte("unprocessed_events")
+	processedEventsBucket            = []byte("processed_events")
+	eventIDCounterBucket             = []byte("event_id_counter")
+	unprocessedTxSignaturesBucket    = []byte("unprocessed_tx_signatures")
+	latestFinalizedBlockNumberBucket = []byte("latest_finalized_block_number")
 
 	currentSlotKey      = []byte("current")
 	latestBlockPointKey = []byte("latestBlockPointKey")
@@ -169,6 +164,7 @@ var (
 	unprocessedTxQueueTailKey      = []byte("tail")
 	unprocessedTxSignaturesListKey = []byte("list") // legacy; migrated on access
 	lastProcessedTxSignatureKey    = []byte("last_processed")
+	latestFinalizedBlockNumberKey  = []byte("latest_finalized_block_number_key")
 )
 
 func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error) {
@@ -219,6 +215,11 @@ func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error
 		_, err = tx.CreateBucketIfNotExists(unprocessedTxSignaturesBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the unprocessed tx signatures bucket: %w", err)
+		}
+
+		_, err = tx.CreateBucketIfNotExists(latestFinalizedBlockNumberBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the latest finalized block number bucket: %w", err)
 		}
 
 		return nil
@@ -538,104 +539,38 @@ func (b *BoltStorageHandler) StoreLatestBlockPoint(tx StorageTransaction, blockP
 	return fmt.Errorf("unknown storage transaction type: %T", tx)
 }
 
-func (b *BoltStorageHandler) GetLatestProcessedBlockPoint() (*BlockPoint, error) {
-	var result *BlockPoint
-
-	if err := b.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blocksBucket)
+func (b *BoltStorageHandler) StoreLatestFinalizedBlockNumber(blockNumber uint64) error {
+	storeFn := func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(latestFinalizedBlockNumberBucket)
 		if bucket == nil {
-			return fmt.Errorf("cannot find blocks bucket")
+			return fmt.Errorf("cannot find latestFinalizedBlockNumber bucket")
 		}
 
-		cursor := bucket.Cursor()
-
-		for k, v := cursor.Last(); k != nil; k, v = cursor.Prev() {
-			var entry BlockPoint
-			if err := json.Unmarshal(v, &entry); err != nil {
-				continue
-			}
-
-			if entry.Processed {
-				result = &entry
-
-				return nil
-			}
+		if err := bucket.Put(latestFinalizedBlockNumberKey, encodeUint64(blockNumber)); err != nil {
+			return fmt.Errorf("cannot store latest finalized block number: %w", err)
 		}
 
 		return nil
-	}); err != nil {
-		return nil, err
 	}
 
-	return result, nil
+	return b.db.Update(storeFn)
 }
 
-func (b *BoltStorageHandler) MarkBlocksProcessedThroughSlot(targetSlot uint64) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(blocksBucket)
+func (b *BoltStorageHandler) GetLatestFinalizedBlockNumber() (uint64, error) {
+	var result uint64
+
+	err := b.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(latestFinalizedBlockNumberBucket)
 		if bucket == nil {
-			return fmt.Errorf("cannot find blocks bucket")
+			return fmt.Errorf("cannot find latestFinalizedBlockNumber bucket")
 		}
 
-		cursor := bucket.Cursor()
-		startSlot := uint64(0)
-
-		seekKey := encodeUint64(targetSlot)
-		k, v := cursor.Seek(seekKey)
-
-		if k == nil {
-			k, v = cursor.Last()
-		} else if decodeUint64(k) > targetSlot {
-			k, v = cursor.Prev()
-		}
-
-		for ; k != nil; k, v = cursor.Prev() {
-			slot := decodeUint64(k)
-			if slot > targetSlot {
-				continue
-			}
-
-			var entry BlockPoint
-			if err := json.Unmarshal(v, &entry); err != nil {
-				return fmt.Errorf("cannot unmarshal block point at slot %d: %w", slot, err)
-			}
-
-			if entry.Processed {
-				startSlot = slot + 1
-
-				break
-			}
-		}
-
-		for k, v = cursor.Seek(encodeUint64(startSlot)); k != nil; k, v = cursor.Next() {
-			slot := decodeUint64(k)
-			if slot > targetSlot {
-				break
-			}
-
-			var entry BlockPoint
-			if err := json.Unmarshal(v, &entry); err != nil {
-				return fmt.Errorf("cannot unmarshal block point at slot %d: %w", slot, err)
-			}
-
-			if entry.Processed {
-				continue
-			}
-
-			entry.Processed = true
-
-			data, err := json.Marshal(entry)
-			if err != nil {
-				return fmt.Errorf("cannot marshal processed block point at slot %d: %w", slot, err)
-			}
-
-			if err := bucket.Put(k, data); err != nil {
-				return fmt.Errorf("cannot update processed flag at slot %d: %w", slot, err)
-			}
-		}
+		result = decodeUint64(bucket.Get(latestFinalizedBlockNumberKey))
 
 		return nil
 	})
+
+	return result, err
 }
 
 func (b *BoltStorageHandler) GetLatestBlockPoint() (*BlockPoint, error) {

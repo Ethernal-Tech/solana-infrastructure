@@ -59,18 +59,17 @@ type EventTrackerConfig struct {
 }
 
 type EventTracker struct {
-	client                     *rpc.Client
-	storage                    store.StorageHandler
-	trackedPrograms            map[solana.PublicKey]ProgramEventSpecs
-	commitment                 rpc.CommitmentType
-	logger                     hclog.Logger
-	pollTime                   time.Duration
-	chainHeadSlot              uint64
-	chainHeadSlotOffset        uint64
-	lastQueriedTxSignature     solana.Signature
-	hasUnprocessedTxSignatures bool
-	blockRoundingThreshold     uint64
-	EventSubscriber            EventSubscriber
+	client                 *rpc.Client
+	storage                store.StorageHandler
+	trackedPrograms        map[solana.PublicKey]ProgramEventSpecs
+	commitment             rpc.CommitmentType
+	logger                 hclog.Logger
+	pollTime               time.Duration
+	chainHeadSlot          uint64
+	chainHeadSlotOffset    uint64
+	lastQueriedTxSignature solana.Signature
+	blockRoundingThreshold uint64
+	EventSubscriber        EventSubscriber
 }
 
 func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (*EventTracker, error) {
@@ -419,11 +418,26 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 				return fmt.Errorf("failed to store event: %w", err)
 			}
 
-			// After the tx is processed we can mark the blocks through the tx slot as processed
-			// these are used later for checking if the tx is expired on oracle
-			err = t.storage.MarkBlocksProcessedThroughSlot(event.SlotNumber)
+			block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
+				return t.client.GetBlockWithOpts(ctx, event.SlotNumber, &rpc.GetBlockOpts{
+					TransactionDetails:             rpc.TransactionDetailsNone,
+					MaxSupportedTransactionVersion: new(uint64),
+					Commitment:                     t.commitment,
+				})
+			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
 			if err != nil {
-				return fmt.Errorf("failed to mark processed blocks through slot %d: %w", event.SlotNumber, err)
+				return fmt.Errorf("failed to get block: %w", err)
+			}
+
+			if block == nil {
+				return fmt.Errorf("no block found at slot %d", event.SlotNumber)
+			}
+
+			if block.BlockHeight != nil {
+				err = t.storage.StoreLatestFinalizedBlockNumber(*block.BlockHeight)
+				if err != nil {
+					return fmt.Errorf("failed to store latest finalized block number: %w", err)
+				}
 			}
 		}
 	}
@@ -442,30 +456,45 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 // Passing solana.Signature{} doens't work
 func (t *EventTracker) getSignaturesForAddressHelper(
 	ctx context.Context, programID solana.PublicKey,
+	before *solana.Signature,
+	until *solana.Signature,
 ) ([]*rpc.TransactionSignature, error) {
-	if t.lastQueriedTxSignature == (solana.Signature{}) {
-		return t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
-			Commitment: t.commitment,
-		})
-	} else {
-		return t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
-			Until:      t.lastQueriedTxSignature,
-			Commitment: t.commitment,
-		})
+	opts := &rpc.GetSignaturesForAddressOpts{
+		Commitment: t.commitment,
 	}
+
+	if before != nil && *before != (solana.Signature{}) {
+		opts.Until = *before
+	}
+
+	if until != nil && *until != (solana.Signature{}) {
+		opts.Until = *until
+	}
+
+	return t.client.GetSignaturesForAddressWithOpts(ctx, programID, opts)
 }
 
 func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, programID solana.PublicKey) error {
 	t.logger.Debug("Fetching new transactions", "last queried tx signature", t.lastQueriedTxSignature.String())
 
+	latestFinalizedBlockNumber, err := t.client.GetBlockHeight(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return err
+	}
+
 	// Query until the last processed signature
-	txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID)
+	txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID, nil, &t.lastQueriedTxSignature)
 	if err != nil {
 		return err
 	}
 
 	if len(txSignatures) == 0 {
-		t.logger.Debug("No new transactions found")
+		t.logger.Debug("No new transactions found, setting new finalized block number", "number", latestFinalizedBlockNumber)
+
+		err = t.storage.StoreLatestFinalizedBlockNumber(latestFinalizedBlockNumber)
+		if err != nil {
+			return fmt.Errorf("failed to store latest finalized block number: %w", err)
+		}
 
 		return nil
 	}
@@ -521,17 +550,16 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 }
 
 func (t *EventTracker) catchUpLoop(
-	ctx context.Context, programID solana.PublicKey, lastQueriedTxSignature solana.Signature,
+	ctx context.Context, programID solana.PublicKey, beforeStart solana.Signature,
 ) (signatures []*rpc.TransactionSignature, err error) {
-	t.logger.Debug("Catching up loop", "last processed tx signature", lastQueriedTxSignature.String())
+	t.logger.Debug("Catching up loop", "last processed tx signature", beforeStart.String())
 
-	before := lastQueriedTxSignature
+	before := beforeStart
 
 	for {
-		txSignatures, err := t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
-			Before:     before,
-			Commitment: t.commitment,
-		})
+		txSignatures, err := ExecuteWithRetry(ctx, func(ctx context.Context) ([]*rpc.TransactionSignature, error) {
+			return t.getSignaturesForAddressHelper(ctx, programID, &before, &t.lastQueriedTxSignature)
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
 		if err != nil {
 			return nil, err
 		}
@@ -664,33 +692,26 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 
 	t.logger.Debug("Slots to query blocks", "count", len(slotsToQueryBlocks), "slots", slotsToQueryBlocks)
 
-	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
-
-		return err
-	}
-
 	for _, slot := range slotsToQueryBlocks {
 		if slot == t.chainHeadSlot {
 			continue
 		}
 
-		block, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
-			TransactionDetails:             rpc.TransactionDetailsNone,
-			MaxSupportedTransactionVersion: new(uint64),
-			Commitment:                     rpc.CommitmentConfirmed,
-		})
+		block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
+			return t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
+				TransactionDetails:             rpc.TransactionDetailsNone,
+				MaxSupportedTransactionVersion: new(uint64),
+				Commitment:                     rpc.CommitmentConfirmed,
+			})
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
 		if err != nil {
 			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
 
-			continue
+			return fmt.Errorf("no block found at slot %d", slot)
 		}
 
 		if block == nil {
-			t.logger.Warn(fmt.Sprintf("No block found at slot %d", slot))
-
-			continue
+			return fmt.Errorf("get block returned nil at slot %d", slot)
 		}
 
 		var blockNumber uint64
@@ -704,7 +725,6 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 			BlockSlot:   slot,
 			BlockHash:   block.Blockhash,
 			BlockNumber: blockNumber,
-			Processed:   lastProcessedTxSignature == t.lastQueriedTxSignature,
 		}
 
 		if err := t.storage.StoreBlock(nil, bp); err != nil {
@@ -714,8 +734,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 		t.logger.Debug("Stored block",
 			"slot", slot,
 			"hash", block.Blockhash,
-			"number", blockNumber,
-			"processed", bp.Processed)
+			"number", blockNumber)
 
 		t.chainHeadSlot = slot
 	}
