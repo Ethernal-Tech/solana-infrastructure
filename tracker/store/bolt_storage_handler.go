@@ -122,6 +122,9 @@ type TxStorageHandler interface {
 	GetAllUnprocessedTransactions() ([]solana.Signature, error)
 	SetLastProcessedTransaction(txSignature solana.Signature) error
 	GetLastProcessedTransaction() (solana.Signature, error)
+	// FinalizeProcessedTransaction atomically removes txSignature from the front of the
+	// unprocessed queue and stores it as the last processed transaction.
+	FinalizeProcessedTransaction(txSignature solana.Signature) error
 }
 
 type BoltStorageHandler struct {
@@ -700,7 +703,7 @@ func (b *BoltStorageHandler) unprocessedTxSignaturesBucket(tx *bolt.Tx) (*bolt.B
 	return bucket, nil
 }
 
-func (b *BoltStorageHandler) loadTxQueueBounds(bucket *bolt.Bucket) (txQueueBounds, error) {
+func loadTxQueueBounds(bucket *bolt.Bucket) (txQueueBounds, error) {
 	var bounds txQueueBounds
 
 	if v := bucket.Get(unprocessedTxQueueHeadKey); v != nil {
@@ -714,11 +717,11 @@ func (b *BoltStorageHandler) loadTxQueueBounds(bucket *bolt.Bucket) (txQueueBoun
 	return bounds, nil
 }
 
-func (b *BoltStorageHandler) storeTxQueueHead(bucket *bolt.Bucket, head uint64) error {
+func storeTxQueueHead(bucket *bolt.Bucket, head uint64) error {
 	return bucket.Put(unprocessedTxQueueHeadKey, encodeUint64(head))
 }
 
-func (b *BoltStorageHandler) storeTxQueueTail(bucket *bolt.Bucket, tail uint64) error {
+func storeTxQueueTail(bucket *bolt.Bucket, tail uint64) error {
 	return bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail))
 }
 
@@ -781,7 +784,15 @@ func signatureFromBucketValue(data []byte) (solana.Signature, error) {
 }
 
 func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.Signature) error {
-	if len(txSignatures) == 0 {
+	nonEmpty := make([]solana.Signature, 0, len(txSignatures))
+
+	for _, sig := range txSignatures {
+		if sig != (solana.Signature{}) {
+			nonEmpty = append(nonEmpty, sig)
+		}
+	}
+
+	if len(nonEmpty) == 0 {
 		return nil
 	}
 
@@ -795,12 +806,12 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.S
 			return err
 		}
 
-		bounds, err := b.loadTxQueueBounds(bucket)
+		bounds, err := loadTxQueueBounds(bucket)
 		if err != nil {
 			return err
 		}
 
-		for _, sig := range txSignatures {
+		for _, sig := range nonEmpty {
 			if err := bucket.Put(encodeUint64(bounds.tail), sig[:]); err != nil {
 				return fmt.Errorf("cannot store unprocessed tx signature: %w", err)
 			}
@@ -808,8 +819,43 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.S
 			bounds.tail++
 		}
 
-		return b.storeTxQueueTail(bucket, bounds.tail)
+		return storeTxQueueTail(bucket, bounds.tail)
 	})
+}
+
+func removeProcessedTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) error {
+	bounds, err := loadTxQueueBounds(bucket)
+	if err != nil {
+		return err
+	}
+
+	if bounds.head >= bounds.tail {
+		return fmt.Errorf("no unprocessed transactions to remove")
+	}
+
+	headKey := encodeUint64(bounds.head)
+
+	front, err := signatureFromBucketValue(bucket.Get(headKey))
+	if err != nil {
+		return fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", bounds.head, err)
+	}
+
+	if front != txSignature {
+		return fmt.Errorf(
+			"transaction %s is not at the front of the unprocessed queue (front is %s)",
+			txSignature, front,
+		)
+	}
+
+	if err := bucket.Delete(headKey); err != nil {
+		return fmt.Errorf("cannot remove unprocessed tx signature: %w", err)
+	}
+
+	return storeTxQueueHead(bucket, bounds.head+1)
+}
+
+func setLastProcessedTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) error {
+	return bucket.Put(lastProcessedTxSignatureKey, txSignature[:])
 }
 
 func (b *BoltStorageHandler) RemoveProcessedTransaction(txSignature solana.Signature) error {
@@ -823,34 +869,7 @@ func (b *BoltStorageHandler) RemoveProcessedTransaction(txSignature solana.Signa
 			return err
 		}
 
-		bounds, err := b.loadTxQueueBounds(bucket)
-		if err != nil {
-			return err
-		}
-
-		if bounds.head >= bounds.tail {
-			return fmt.Errorf("no unprocessed transactions to remove")
-		}
-
-		headKey := encodeUint64(bounds.head)
-
-		front, err := signatureFromBucketValue(bucket.Get(headKey))
-		if err != nil {
-			return fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", bounds.head, err)
-		}
-
-		if front != txSignature {
-			return fmt.Errorf(
-				"transaction %s is not at the front of the unprocessed queue (front is %s)",
-				txSignature, front,
-			)
-		}
-
-		if err := bucket.Delete(headKey); err != nil {
-			return fmt.Errorf("cannot remove unprocessed tx signature: %w", err)
-		}
-
-		return b.storeTxQueueHead(bucket, bounds.head+1)
+		return removeProcessedTransactionInBucket(bucket, txSignature)
 	})
 }
 
@@ -878,7 +897,7 @@ func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature
 			return err
 		}
 
-		bounds, err := b.loadTxQueueBounds(bucket)
+		bounds, err := loadTxQueueBounds(bucket)
 		if err != nil {
 			return err
 		}
@@ -916,7 +935,26 @@ func (b *BoltStorageHandler) SetLastProcessedTransaction(txSignature solana.Sign
 			return err
 		}
 
-		return bucket.Put(lastProcessedTxSignatureKey, txSignature[:])
+		return setLastProcessedTransactionInBucket(bucket, txSignature)
+	})
+}
+
+func (b *BoltStorageHandler) FinalizeProcessedTransaction(txSignature solana.Signature) error {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
+			return err
+		}
+
+		if err := removeProcessedTransactionInBucket(bucket, txSignature); err != nil {
+			return err
+		}
+
+		return setLastProcessedTransactionInBucket(bucket, txSignature)
 	})
 }
 

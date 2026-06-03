@@ -92,6 +92,17 @@ func TestBoltStorageHandler_UnprocessedTransactions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []solana.Signature{sigA, sigB, sigC}, queue)
 
+	emptySig := solana.Signature{}
+
+	require.NoError(t, handler.PushUnprocessedTransactions([]solana.Signature{
+		emptySig,
+		emptySig,
+	}))
+
+	queue, err = handler.GetAllUnprocessedTransactions()
+	require.NoError(t, err)
+	require.Equal(t, []solana.Signature{sigA, sigB, sigC}, queue)
+
 	require.NoError(t, handler.RemoveProcessedTransaction(sigA))
 
 	queue, err = handler.GetAllUnprocessedTransactions()
@@ -148,4 +159,43 @@ func TestBoltStorageHandler_LastProcessedTransaction(t *testing.T) {
 	lastProcessed, err = handler.GetLastProcessedTransaction()
 	require.NoError(t, err)
 	require.Equal(t, sig2, lastProcessed)
+}
+
+func TestBoltStorageHandler_FinalizeProcessedTransaction(t *testing.T) {
+	t.Parallel()
+
+	dbPath, err := os.CreateTemp("", "solana-store-finalize-tx-test-*")
+	require.NoError(t, err)
+
+	require.NoError(t, dbPath.Close())
+	require.NoError(t, os.Remove(dbPath.Name()))
+
+	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, handler.Close())
+		require.NoError(t, os.Remove(dbPath.Name()))
+	})
+
+	sigA, err := solana.NewWallet().PrivateKey.Sign([]byte("a"))
+	require.NoError(t, err)
+	sigB, err := solana.NewWallet().PrivateKey.Sign([]byte("b"))
+	require.NoError(t, err)
+
+	require.NoError(t, handler.PushUnprocessedTransactions([]solana.Signature{sigA, sigB}))
+
+	require.NoError(t, handler.FinalizeProcessedTransaction(sigA))
+
+	lastProcessed, err := handler.GetLastProcessedTransaction()
+	require.NoError(t, err)
+	require.Equal(t, sigA, lastProcessed)
+
+	queue, err := handler.GetAllUnprocessedTransactions()
+	require.NoError(t, err)
+	require.Equal(t, []solana.Signature{sigB}, queue)
+
+	err = handler.FinalizeProcessedTransaction(sigA)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not at the front")
 }

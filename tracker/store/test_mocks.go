@@ -150,6 +150,12 @@ func (m *MockStorageHandler) SetLastProcessedTransaction(txSignature solana.Sign
 	return args.Error(0)
 }
 
+func (m *MockStorageHandler) FinalizeProcessedTransaction(txSignature solana.Signature) error {
+	args := m.Called(txSignature)
+
+	return args.Error(0)
+}
+
 func (m *MockStorageHandler) GetLastProcessedTransaction() (solana.Signature, error) {
 	args := m.Called()
 

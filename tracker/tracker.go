@@ -67,10 +67,8 @@ type EventTracker struct {
 	pollTime                   time.Duration
 	chainHeadSlot              uint64
 	chainHeadSlotOffset        uint64
-	lastProcessedTxSignature   solana.Signature
 	lastQueriedTxSignature     solana.Signature
 	hasUnprocessedTxSignatures bool
-	unprocessedTxSignatures    []solana.Signature
 	blockRoundingThreshold     uint64
 	EventSubscriber            EventSubscriber
 }
@@ -124,19 +122,17 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 	}
 
 	t := &EventTracker{
-		client:                   config.Client,
-		storage:                  storage,
-		trackedPrograms:          trackedPrograms,
-		commitment:               commitment,
-		logger:                   config.Logger,
-		pollTime:                 pollTime,
-		chainHeadSlot:            config.StartFromSlot,
-		chainHeadSlotOffset:      50,
-		lastProcessedTxSignature: solana.Signature{},
-		lastQueriedTxSignature:   solana.Signature{},
-		unprocessedTxSignatures:  []solana.Signature{},
-		blockRoundingThreshold:   blockRoundingThreshold,
-		EventSubscriber:          config.EventSubscriber,
+		client:                 config.Client,
+		storage:                storage,
+		trackedPrograms:        trackedPrograms,
+		commitment:             commitment,
+		logger:                 config.Logger,
+		pollTime:               pollTime,
+		chainHeadSlot:          config.StartFromSlot,
+		chainHeadSlotOffset:    50,
+		lastQueriedTxSignature: solana.Signature{},
+		blockRoundingThreshold: blockRoundingThreshold,
+		EventSubscriber:        config.EventSubscriber,
 	}
 
 	return t, nil
@@ -175,9 +171,16 @@ func (t *EventTracker) Start(ctx context.Context) {
 					continue
 				}
 
+				lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+				if err != nil {
+					t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
+
+					continue
+				}
+
 				// Force tx processing if there are unprocessed tx signatures
 				// before querying new transactions
-				if i%2 == 0 || t.lastQueriedTxSignature != t.lastProcessedTxSignature {
+				if i%2 == 0 || t.lastQueriedTxSignature != lastProcessedTxSignature {
 					err := t.fetchNextGetFullTxBySignature(ctx)
 					if err != nil {
 						t.logger.Warn(fmt.Sprintf("Failed to fetch next full tx by signature: %s", err.Error()))
@@ -195,6 +198,28 @@ func (t *EventTracker) Start(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (t *EventTracker) getLastUnprocessedTxSignature() (solana.Signature, error) {
+	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
+	if err != nil {
+		return solana.Signature{}, err
+	}
+
+	if len(unprocessedTxSignatures) == 0 {
+		lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+		if err != nil {
+			return solana.Signature{}, err
+		}
+
+		if lastProcessedTxSignature == (solana.Signature{}) {
+			return solana.Signature{}, nil
+		}
+
+		return lastProcessedTxSignature, nil
+	}
+
+	return unprocessedTxSignatures[len(unprocessedTxSignatures)-1], nil
 }
 
 // Initialization on startup
@@ -217,22 +242,21 @@ func (t *EventTracker) initialize() error {
 		return err
 	}
 
-	t.lastProcessedTxSignature, err = t.storage.GetLastProcessedTransaction()
+	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
 	if err != nil {
 		t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
 
 		return err
 	}
 
-	t.unprocessedTxSignatures = unprocessedTxSignatures
-	if len(t.unprocessedTxSignatures) > 0 {
-		t.lastQueriedTxSignature = t.unprocessedTxSignatures[len(t.unprocessedTxSignatures)-1]
+	if len(unprocessedTxSignatures) > 0 {
+		t.lastQueriedTxSignature = unprocessedTxSignatures[len(unprocessedTxSignatures)-1]
 	} else {
 		// If there are no unprocessed tx signatures, use the last processed tx signature
 		// as the last queried tx signature so we can continue querying for new transactions
 		// If empty it's a first run, so we need to start from the beginning
-		if t.lastProcessedTxSignature != (solana.Signature{}) {
-			t.lastQueriedTxSignature = t.lastProcessedTxSignature
+		if lastProcessedTxSignature != (solana.Signature{}) {
+			t.lastQueriedTxSignature = lastProcessedTxSignature
 		} else {
 			t.lastQueriedTxSignature = solana.Signature{}
 		}
@@ -243,13 +267,23 @@ func (t *EventTracker) initialize() error {
 
 // Fetches tx and does processing
 func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error {
-	if len(t.unprocessedTxSignatures) == 0 {
-		return nil
+	txSignature, err := t.getLastUnprocessedTxSignature()
+	if err != nil {
+		return err
 	}
 
-	txSignature := t.unprocessedTxSignatures[0]
-
 	t.logger.Debug("Fetching next full tx by signature", "tx signature", txSignature.String())
+
+	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+	if err != nil {
+		return err
+	}
+
+	if txSignature == (solana.Signature{}) || txSignature == lastProcessedTxSignature {
+		t.logger.Debug("Transaction already processed")
+
+		return nil
+	}
 
 	transactionResponse, err := t.client.GetTransaction(ctx, txSignature, &rpc.GetTransactionOpts{
 		Commitment:                     t.commitment,
@@ -394,18 +428,10 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 		}
 	}
 
-	err = t.storage.SetLastProcessedTransaction(txSignature)
+	err = t.storage.FinalizeProcessedTransaction(txSignature)
 	if err != nil {
-		return fmt.Errorf("failed to set last processed transaction: %w", err)
+		return fmt.Errorf("failed to finalize processed transaction: %w", err)
 	}
-
-	err = t.storage.RemoveProcessedTransaction(txSignature)
-	if err != nil {
-		return fmt.Errorf("failed to remove processed transaction: %w", err)
-	}
-
-	t.lastProcessedTxSignature = txSignature
-	t.unprocessedTxSignatures = t.unprocessedTxSignatures[1:]
 
 	return nil
 }
@@ -448,10 +474,6 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 		"count", len(txSignatures),
 		"last queried tx signature", t.lastQueriedTxSignature.String())
 
-	if len(txSignatures) == 0 {
-		return nil
-	}
-
 	if len(txSignatures) == getSignaturesForAddressMaxLimit {
 		// We have to fetch what was before the last processed signature
 		// since the initial query returned the max limit of signatures
@@ -465,28 +487,27 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 
 	// Since signatures are queried in reverse order, we need to store them in
 	// reverse order to get the correct order for processing
+	unprocessedTxSignatures := make([]solana.Signature, 0, len(txSignatures))
 
 	for i := len(txSignatures) - 1; i >= 0; i-- {
 		// If the last queried tx signature is empty, we need to check if the tx slot is greater than the chain head slot
 		// if it is, we skip the tx
 		// important for the first run
-		if t.lastQueriedTxSignature == (solana.Signature{}) {
-			if t.chainHeadSlot > txSignatures[i].Slot {
-				continue
-			}
+		if t.lastQueriedTxSignature == (solana.Signature{}) && t.chainHeadSlot > txSignatures[i].Slot {
+			continue
 		}
 
-		t.unprocessedTxSignatures = append(t.unprocessedTxSignatures, txSignatures[i].Signature)
+		unprocessedTxSignatures = append(unprocessedTxSignatures, txSignatures[i].Signature)
 	}
 
 	// If we skipped all the txs, we need to set the last queried tx signature to the newest one
-	if len(t.unprocessedTxSignatures) == 0 {
+	if len(unprocessedTxSignatures) == 0 {
 		t.lastQueriedTxSignature = txSignatures[0].Signature
 
 		return nil
 	}
 
-	err = t.storage.PushUnprocessedTransactions(t.unprocessedTxSignatures)
+	err = t.storage.PushUnprocessedTransactions(unprocessedTxSignatures)
 	if err != nil {
 		return fmt.Errorf("failed to push unprocessed transactions: %w", err)
 	}
@@ -504,9 +525,11 @@ func (t *EventTracker) catchUpLoop(
 ) (signatures []*rpc.TransactionSignature, err error) {
 	t.logger.Debug("Catching up loop", "last processed tx signature", lastQueriedTxSignature.String())
 
+	before := lastQueriedTxSignature
+
 	for {
 		txSignatures, err := t.client.GetSignaturesForAddressWithOpts(ctx, programID, &rpc.GetSignaturesForAddressOpts{
-			Before:     lastQueriedTxSignature,
+			Before:     before,
 			Commitment: t.commitment,
 		})
 		if err != nil {
@@ -518,6 +541,8 @@ func (t *EventTracker) catchUpLoop(
 		if len(txSignatures) < getSignaturesForAddressMaxLimit {
 			break
 		}
+
+		before = txSignatures[len(txSignatures)-1].Signature
 	}
 
 	t.logger.Debug("Caught up old transactions", "count", len(signatures))
@@ -639,6 +664,13 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 
 	t.logger.Debug("Slots to query blocks", "count", len(slotsToQueryBlocks), "slots", slotsToQueryBlocks)
 
+	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+	if err != nil {
+		t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
+
+		return err
+	}
+
 	for _, slot := range slotsToQueryBlocks {
 		if slot == t.chainHeadSlot {
 			continue
@@ -672,7 +704,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 			BlockSlot:   slot,
 			BlockHash:   block.Blockhash,
 			BlockNumber: blockNumber,
-			Processed:   t.lastProcessedTxSignature == t.lastQueriedTxSignature,
+			Processed:   lastProcessedTxSignature == t.lastQueriedTxSignature,
 		}
 
 		if err := t.storage.StoreBlock(nil, bp); err != nil {
@@ -688,5 +720,9 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 		t.chainHeadSlot = slot
 	}
 
-	return t.storage.StoreLatestBlockPoint(nil, bp)
+	if bp.BlockSlot > 0 {
+		return t.storage.StoreLatestBlockPoint(nil, bp)
+	}
+
+	return nil
 }
