@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gagliardetto/solana-go/rpc"
@@ -59,7 +60,7 @@ type EventTrackerConfig struct {
 }
 
 type EventTracker struct {
-	client                 *rpc.Client
+	client                 *MutexRPCClient
 	storage                store.StorageHandler
 	trackedPrograms        map[solana.PublicKey]ProgramEventSpecs
 	commitment             rpc.CommitmentType
@@ -70,6 +71,7 @@ type EventTracker struct {
 	lastQueriedTxSignature solana.Signature
 	blockRoundingThreshold uint64
 	EventSubscriber        EventSubscriber
+	mu                     sync.Mutex
 }
 
 func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (*EventTracker, error) {
@@ -121,7 +123,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 	}
 
 	t := &EventTracker{
-		client:                 config.Client,
+		client:                 NewMutexRPCClient(config.Client),
 		storage:                storage,
 		trackedPrograms:        trackedPrograms,
 		commitment:             commitment,
@@ -140,63 +142,109 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 func (t *EventTracker) Start(ctx context.Context) {
 	t.logger.Info("Starting new event tracker")
 
-	i := 0
-
-	err := t.initialize()
-	if err != nil {
+	if err := t.initialize(); err != nil {
 		t.logger.Warn(fmt.Sprintf("Failed to initialize event tracker: %s", err.Error()))
 
 		return
 	}
 
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		t.runChainHeadRefresh(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		t.runTransactionPolling(ctx)
+	}()
+
+	<-ctx.Done()
+	t.logger.Info("Context done, stopping event tracker")
+	wg.Wait()
+}
+
+func (t *EventTracker) runChainHeadRefresh(ctx context.Context) {
+	ticker := time.NewTicker(t.pollTime * 10)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
-			t.logger.Info("Context done, stopping event tracker")
-
 			return
-		case <-time.After(t.pollTime):
-			{
-				t.logger.Debug("Polling for new events")
-
-				if i >= 10 {
-					err := t.refreshChainHead(ctx)
-					if err != nil {
-						t.logger.Warn(fmt.Sprintf("Failed to refresh chain head: %s", err.Error()))
-					}
-
-					i = 0
-
-					continue
-				}
-
-				lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
-				if err != nil {
-					t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
-
-					continue
-				}
-
-				// Force tx processing if there are unprocessed tx signatures
-				// before querying new transactions
-				if i%2 == 0 || t.lastQueriedTxSignature != lastProcessedTxSignature {
-					err := t.fetchNextGetFullTxBySignature(ctx)
-					if err != nil {
-						t.logger.Warn(fmt.Sprintf("Failed to fetch next full tx by signature: %s", err.Error()))
-					}
-				} else {
-					for programID := range t.trackedPrograms {
-						err := t.fetchNextGetSignaturesForAddress(ctx, programID)
-						if err != nil {
-							t.logger.Warn(fmt.Sprintf("Failed to fetch next signatures for address: %s", err.Error()))
-						}
-					}
-				}
-
-				i++
+		case <-ticker.C:
+			if err := t.refreshChainHead(ctx); err != nil {
+				t.logger.Warn(fmt.Sprintf("Failed to refresh chain head: %s", err.Error()))
 			}
 		}
 	}
+}
+
+func (t *EventTracker) runTransactionPolling(ctx context.Context) {
+	ticker := time.NewTicker(t.pollTime)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			t.logger.Debug("Polling for new events")
+
+			lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+			if err != nil {
+				t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
+
+				continue
+			}
+
+			// Force tx processing if there are unprocessed tx signatures
+			// before querying new transactions
+			lastQueriedTxSignature := t.getLastQueriedTxSignature()
+			if lastQueriedTxSignature != lastProcessedTxSignature {
+				if err := t.fetchNextGetFullTxBySignature(ctx); err != nil {
+					t.logger.Warn(fmt.Sprintf("Failed to fetch next full tx by signature: %s", err.Error()))
+				}
+			} else {
+				for programID := range t.trackedPrograms {
+					if err := t.fetchNextGetSignaturesForAddress(ctx, programID, lastQueriedTxSignature); err != nil {
+						t.logger.Warn(fmt.Sprintf("Failed to fetch next signatures for address: %s", err.Error()))
+					}
+				}
+			}
+		}
+	}
+}
+
+func (t *EventTracker) getChainHeadSlot() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.chainHeadSlot
+}
+
+func (t *EventTracker) setChainHeadSlot(slot uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.chainHeadSlot = slot
+}
+
+func (t *EventTracker) getLastQueriedTxSignature() solana.Signature {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.lastQueriedTxSignature
+}
+
+func (t *EventTracker) setLastQueriedTxSignature(sig solana.Signature) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.lastQueriedTxSignature = sig
 }
 
 func (t *EventTracker) getLastUnprocessedTxSignature() (solana.Signature, error) {
@@ -230,8 +278,8 @@ func (t *EventTracker) initialize() error {
 		return err
 	}
 
-	if latestBlockPoint != nil && latestBlockPoint.BlockSlot > t.chainHeadSlot {
-		t.chainHeadSlot = latestBlockPoint.BlockSlot
+	if latestBlockPoint != nil && latestBlockPoint.BlockSlot > t.getChainHeadSlot() {
+		t.setChainHeadSlot(latestBlockPoint.BlockSlot)
 	}
 
 	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
@@ -249,15 +297,15 @@ func (t *EventTracker) initialize() error {
 	}
 
 	if len(unprocessedTxSignatures) > 0 {
-		t.lastQueriedTxSignature = unprocessedTxSignatures[len(unprocessedTxSignatures)-1]
+		t.setLastQueriedTxSignature(unprocessedTxSignatures[len(unprocessedTxSignatures)-1])
 	} else {
 		// If there are no unprocessed tx signatures, use the last processed tx signature
 		// as the last queried tx signature so we can continue querying for new transactions
 		// If empty it's a first run, so we need to start from the beginning
 		if lastProcessedTxSignature != (solana.Signature{}) {
-			t.lastQueriedTxSignature = lastProcessedTxSignature
+			t.setLastQueriedTxSignature(lastProcessedTxSignature)
 		} else {
-			t.lastQueriedTxSignature = solana.Signature{}
+			t.setLastQueriedTxSignature(solana.Signature{})
 		}
 	}
 
@@ -479,8 +527,10 @@ func (t *EventTracker) getSignaturesForAddressHelper(
 	return t.client.GetSignaturesForAddressWithOpts(ctx, programID, opts)
 }
 
-func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, programID solana.PublicKey) error {
-	t.logger.Debug("Fetching new transactions", "last queried tx signature", t.lastQueriedTxSignature.String())
+func (t *EventTracker) fetchNextGetSignaturesForAddress(
+	ctx context.Context, programID solana.PublicKey, lastQueriedTxSignature solana.Signature,
+) error {
+	t.logger.Debug("Fetching new transactions", "last queried tx signature", lastQueriedTxSignature.String())
 
 	latestFinalizedBlockNumber, err := t.client.GetBlockHeight(ctx, rpc.CommitmentFinalized)
 	if err != nil {
@@ -488,7 +538,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 	}
 
 	// Query until the last processed signature
-	txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID, nil, &t.lastQueriedTxSignature)
+	txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID, nil, &lastQueriedTxSignature)
 	if err != nil {
 		return err
 	}
@@ -506,12 +556,12 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 
 	t.logger.Debug("Fetched new transactions",
 		"count", len(txSignatures),
-		"last queried tx signature", t.lastQueriedTxSignature.String())
+		"last queried tx signature", lastQueriedTxSignature.String())
 
 	if len(txSignatures) == getSignaturesForAddressMaxLimit {
 		// We have to fetch what was before the last processed signature
 		// since the initial query returned the max limit of signatures
-		signatures, err := t.catchUpLoop(ctx, programID, txSignatures[len(txSignatures)-1].Signature)
+		signatures, err := t.catchUpLoop(ctx, programID, lastQueriedTxSignature, txSignatures[len(txSignatures)-1].Signature)
 		if err != nil {
 			return err
 		}
@@ -527,8 +577,11 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 		// If the last queried tx signature is empty, we need to check if the tx slot is greater than the chain head slot
 		// if it is, we skip the tx
 		// important for the first run
-		if t.lastQueriedTxSignature == (solana.Signature{}) && t.chainHeadSlot > txSignatures[i].Slot {
-			continue
+		if lastQueriedTxSignature == (solana.Signature{}) {
+			chainHeadSlot := t.getChainHeadSlot()
+			if chainHeadSlot > txSignatures[i].Slot {
+				continue
+			}
 		}
 
 		unprocessedTxSignatures = append(unprocessedTxSignatures, txSignatures[i].Signature)
@@ -536,7 +589,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 
 	// If we skipped all the txs, we need to set the last queried tx signature to the newest one
 	if len(unprocessedTxSignatures) == 0 {
-		t.lastQueriedTxSignature = txSignatures[0].Signature
+		t.setLastQueriedTxSignature(txSignatures[0].Signature)
 
 		return nil
 	}
@@ -546,16 +599,19 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(ctx context.Context, pro
 		return fmt.Errorf("failed to push unprocessed transactions: %w", err)
 	}
 
-	t.lastQueriedTxSignature = txSignatures[0].Signature
+	t.setLastQueriedTxSignature(txSignatures[0].Signature)
 
 	t.logger.Debug("Fetched new transactions", "count",
-		len(txSignatures), "last queried tx signature", t.lastQueriedTxSignature.String())
+		len(txSignatures), "last queried tx signature", txSignatures[0].Signature.String())
 
 	return nil
 }
 
 func (t *EventTracker) catchUpLoop(
-	ctx context.Context, programID solana.PublicKey, beforeStart solana.Signature,
+	ctx context.Context,
+	programID solana.PublicKey,
+	lastQueried solana.Signature,
+	beforeStart solana.Signature,
 ) (signatures []*rpc.TransactionSignature, err error) {
 	t.logger.Debug("Catching up loop", "last processed tx signature", beforeStart.String())
 
@@ -671,16 +727,12 @@ func getSlotsToQueryBlocks(slotsWithBlocks []uint64, threshold uint64) []uint64 
 // silently skipped and the previously stored chain head remains valid.
 // Only storage write errors are returned; RPC/fetch failures are non-fatal.
 func (t *EventTracker) refreshChainHead(ctx context.Context) error {
-	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", t.chainHeadSlot))
+	chainHeadSlot := t.getChainHeadSlot()
 
-	var (
-		startSlot uint64
-		endSlot   uint64
-		err       error
-	)
+	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", chainHeadSlot))
 
-	startSlot = t.chainHeadSlot
-	endSlot = t.chainHeadSlot + t.chainHeadSlotOffset
+	startSlot := chainHeadSlot
+	endSlot := chainHeadSlot + t.chainHeadSlotOffset
 
 	slotsWithBlocks, err := t.client.GetBlocks(ctx, startSlot, &endSlot, rpc.CommitmentConfirmed)
 	if err != nil {
@@ -690,7 +742,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 	}
 
 	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
-		10, endSlot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
+		t.chainHeadSlotOffset, endSlot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
 
 	if len(slotsWithBlocks) == 0 {
 		return nil
@@ -703,7 +755,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 	t.logger.Debug("Slots to query blocks", "count", len(slotsToQueryBlocks), "slots", slotsToQueryBlocks)
 
 	for _, slot := range slotsToQueryBlocks {
-		if slot == t.chainHeadSlot {
+		if slot == chainHeadSlot {
 			continue
 		}
 
@@ -751,7 +803,8 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 			"hash", block.Blockhash,
 			"number", blockNumber)
 
-		t.chainHeadSlot = slot
+		chainHeadSlot = slot
+		t.setChainHeadSlot(slot)
 	}
 
 	if bp.BlockSlot > 0 {
