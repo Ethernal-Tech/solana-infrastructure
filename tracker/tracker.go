@@ -56,7 +56,7 @@ type EventTrackerConfig struct {
 	TrackedPrograms        map[string]ProgramEventSpecs
 	Commitment             string
 	Logger                 hclog.Logger
-	PollTime               time.Duration
+	RetryTimeout           time.Duration
 	StartFromSlot          uint64
 	BlockRoundingThreshold uint64
 	EventSubscriber        EventSubscriber
@@ -69,12 +69,12 @@ type EventTracker struct {
 	commitment             rpc.CommitmentType
 	logger                 hclog.Logger
 	pollTime               time.Duration
+	startFromSlot          uint64
 	chainHeadSlot          uint64
 	chainHeadSlotOffset    uint64
 	lastQueriedTxSignature solana.Signature
 	blockRoundingThreshold uint64
 	EventSubscriber        EventSubscriber
-	mu                     sync.Mutex
 }
 
 func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (*EventTracker, error) {
@@ -110,7 +110,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		return nil, err
 	}
 
-	pollTime := config.PollTime
+	pollTime := config.RetryTimeout
 	if pollTime == 0 {
 		pollTime = 500 * time.Millisecond
 	}
@@ -133,6 +133,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		logger:                 config.Logger,
 		pollTime:               pollTime,
 		chainHeadSlot:          config.StartFromSlot,
+		startFromSlot:          config.StartFromSlot,
 		chainHeadSlotOffset:    50,
 		lastQueriedTxSignature: solana.Signature{},
 		blockRoundingThreshold: blockRoundingThreshold,
@@ -165,8 +166,8 @@ func (t *EventTracker) Start(ctx context.Context) {
 		t.runTransactionPolling(ctx)
 	}()
 
-	t.logger.Info("Context done, stopping event tracker")
 	wg.Wait()
+	t.logger.Info("Context done, stopping event tracker")
 }
 
 func (t *EventTracker) runChainHeadRefresh(ctx context.Context) {
@@ -431,6 +432,9 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 					return fmt.Errorf("failed to store latest finalized block number for transaction %s: %w",
 						txSignature.String(), err)
 				}
+			} else {
+				return fmt.Errorf("no block height found for block at slot %d for transaction %s",
+					transactionResponse.Slot, txSignature.String())
 			}
 
 			event := EventNotification{
@@ -549,8 +553,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		// if it is, we skip the tx
 		// important for the first run
 		if lastQueriedTxSignature == (solana.Signature{}) {
-			chainHeadSlot := t.chainHeadSlot
-			if chainHeadSlot > txSignatures[i].Slot {
+			if t.startFromSlot > txSignatures[i].Slot {
 				continue
 			}
 		}
@@ -608,7 +611,6 @@ func (t *EventTracker) catchUpLoop(
 			break
 		}
 
-		until = before
 		before = txSignatures[len(txSignatures)-1].Signature
 	}
 
