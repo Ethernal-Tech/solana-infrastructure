@@ -28,8 +28,14 @@ type IUserDataRetriever interface {
 	) (rpc.GetProgramAccountsResult, error)
 }
 
+type LatestBlockhashAndExpiry struct {
+	Blockhash            solana.Hash
+	LastValidBlockHeight uint64
+}
+
 type IChainDataRetriever interface {
 	GetLatestBlockhash(ctx context.Context) (solana.Hash, error)
+	GetLatestBlockhashAndExpiry(ctx context.Context) (LatestBlockhashAndExpiry, error)
 	GetSlot(ctx context.Context) (uint64, error)
 	GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResult, error)
 	GetBlockHeight(ctx context.Context) (uint64, error)
@@ -113,6 +119,18 @@ func (p *Provider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) 
 	}
 
 	return res.Value.Blockhash, nil
+}
+
+func (p *Provider) GetLatestBlockhashAndExpiry(ctx context.Context) (LatestBlockhashAndExpiry, error) {
+	res, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return LatestBlockhashAndExpiry{}, err
+	}
+
+	return LatestBlockhashAndExpiry{
+		Blockhash:            res.Value.Blockhash,
+		LastValidBlockHeight: res.Value.LastValidBlockHeight,
+	}, nil
 }
 
 func (p *Provider) GetSlot(ctx context.Context) (uint64, error) {

@@ -64,6 +64,12 @@ func (m *MockTxProvider) GetLatestBlockhash(ctx context.Context) (solana.Hash, e
 	return args.Get(0).(solana.Hash), args.Error(1) //nolint:forcetypeassert
 }
 
+func (m *MockTxProvider) GetLatestBlockhashAndExpiry(ctx context.Context) (LatestBlockhashAndExpiry, error) {
+	args := m.Called(ctx)
+
+	return args.Get(0).(LatestBlockhashAndExpiry), args.Error(1) //nolint:forcetypeassert
+}
+
 func (m *MockTxProvider) GetSlot(ctx context.Context) (uint64, error) {
 	args := m.Called(ctx)
 
@@ -195,6 +201,12 @@ func (m *MockChainDataRetriever) GetLatestBlockhash(ctx context.Context) (solana
 	args := m.Called(ctx)
 
 	return args.Get(0).(solana.Hash), args.Error(1) //nolint:forcetypeassert
+}
+
+func (m *MockChainDataRetriever) GetLatestBlockhashAndExpiry(ctx context.Context) (LatestBlockhashAndExpiry, error) {
+	args := m.Called(ctx)
+
+	return args.Get(0).(LatestBlockhashAndExpiry), args.Error(1) //nolint:forcetypeassert
 }
 
 func (m *MockChainDataRetriever) GetSlot(ctx context.Context) (uint64, error) {
