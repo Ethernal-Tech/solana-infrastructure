@@ -419,11 +419,16 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 			}
 
 			block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
-				return t.client.GetBlockWithOpts(ctx, event.SlotNumber, &rpc.GetBlockOpts{
+				result, err := t.client.GetBlockWithOpts(ctx, event.SlotNumber, &rpc.GetBlockOpts{
 					TransactionDetails:             rpc.TransactionDetailsNone,
 					MaxSupportedTransactionVersion: new(uint64),
 					Commitment:                     t.commitment,
 				})
+				if err != nil {
+					return nil, ErrRetryTryAgain
+				}
+
+				return result, nil
 			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
 			if err != nil {
 				return fmt.Errorf("failed to get block: %w", err)
@@ -464,7 +469,7 @@ func (t *EventTracker) getSignaturesForAddressHelper(
 	}
 
 	if before != nil && *before != (solana.Signature{}) {
-		opts.Until = *before
+		opts.Before = *before
 	}
 
 	if until != nil && *until != (solana.Signature{}) {
@@ -558,7 +563,12 @@ func (t *EventTracker) catchUpLoop(
 
 	for {
 		txSignatures, err := ExecuteWithRetry(ctx, func(ctx context.Context) ([]*rpc.TransactionSignature, error) {
-			return t.getSignaturesForAddressHelper(ctx, programID, &before, &t.lastQueriedTxSignature)
+			signatures, err := t.getSignaturesForAddressHelper(ctx, programID, &before, &t.lastQueriedTxSignature)
+			if err != nil {
+				return nil, ErrRetryTryAgain
+			}
+
+			return signatures, nil
 		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
 		if err != nil {
 			return nil, err
@@ -632,7 +642,7 @@ func setupClientNew(config *EventTrackerConfig) error {
 		return fmt.Errorf("either config.Client or config.RPCEndpoint must be set")
 	}
 
-	config.Client = rpc.New(config.RPCEndpoint)
+	config.Client = rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(config.RPCEndpoint, 100))
 
 	return nil
 }
@@ -698,11 +708,16 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 		}
 
 		block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
-			return t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
+			result, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
 				TransactionDetails:             rpc.TransactionDetailsNone,
 				MaxSupportedTransactionVersion: new(uint64),
 				Commitment:                     rpc.CommitmentConfirmed,
 			})
+			if err != nil {
+				return nil, ErrRetryTryAgain
+			}
+
+			return result, nil
 		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
 		if err != nil {
 			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
