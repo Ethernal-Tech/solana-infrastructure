@@ -38,11 +38,11 @@ func TestBoltStorageHandler_GetEventsBySlot(t *testing.T) {
 	}
 
 	require.NoError(t, handler.StoreEvent(
-		nil, 10, sig1, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 1}))
+		nil, 10, 100, sig1, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 1}))
 	require.NoError(t, handler.StoreEvent(
-		nil, 10, sig2, programID, "TransactionExecutedEvent", [32]byte{}, &testEvent{Value: 2}))
+		nil, 10, 100, sig2, programID, "TransactionExecutedEvent", [32]byte{}, &testEvent{Value: 2}))
 	require.NoError(t, handler.StoreEvent(
-		nil, 11, sig3, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 3}))
+		nil, 11, 101, sig3, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 3}))
 
 	events, err := handler.GetEventsBySlot(10)
 	require.NoError(t, err)

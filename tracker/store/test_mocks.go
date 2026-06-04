@@ -37,9 +37,9 @@ func (m *MockStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) er
 }
 
 func (m *MockStorageHandler) StoreEvent(
-	tx StorageTransaction, slot uint64, txSignature solana.Signature, programID solana.PublicKey,
+	tx StorageTransaction, slot uint64, blockNumber uint64, txSignature solana.Signature, programID solana.PublicKey,
 	eventName string, innerActionHash [32]byte, eventData any) error {
-	args := m.Called(tx, slot, txSignature, programID, eventName, eventData)
+	args := m.Called(tx, slot, blockNumber, txSignature, programID, eventName, eventData)
 
 	return args.Error(0)
 }
@@ -105,6 +105,13 @@ func (m *MockStorageHandler) GetLatestFinalizedBlockNumber() (uint64, error) {
 
 func (m *MockStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error) {
 	args := m.Called(slot)
+
+	//nolint:forcetypeassert
+	return args.Get(0).([]EventRecord), args.Error(1)
+}
+
+func (m *MockStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
+	args := m.Called(blockNumber)
 
 	//nolint:forcetypeassert
 	return args.Get(0).([]EventRecord), args.Error(1)

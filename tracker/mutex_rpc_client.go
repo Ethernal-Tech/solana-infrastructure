@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,31 +18,36 @@ const (
 
 // JSON-RPC method names subject to the per-method request cap.
 const (
-	rpcMethodGetTransaction           = "getTransaction"
-	rpcMethodGetSignaturesForAddress  = "getSignaturesForAddress"
-	rpcMethodGetBlocks                = "getBlocks"
-	rpcMethodGetBlock                 = "getBlock"
-	rpcMethodGetBlockHeight           = "getBlockHeight"
+	rpcMethodGetTransaction          = "getTransaction"
+	rpcMethodGetSignaturesForAddress = "getSignaturesForAddress"
+	rpcMethodGetBlocks               = "getBlocks"
+	rpcMethodGetBlock                = "getBlock"
+	rpcMethodGetBlockHeight          = "getBlockHeight"
 )
 
 type MutexRPCClient struct {
-	rpcClient      *rpc.Client
-	mu             sync.Mutex
-	methodLimiters map[string]*rate.Limiter
+	rpcClient   *rpc.Client
+	mu          sync.Mutex
+	methodComps map[string]*methodComponents
+}
+
+type methodComponents struct {
+	limiter *rate.Limiter
+	mu      sync.Mutex
 }
 
 func NewMutexRPCClient(rpcClient *rpc.Client) *MutexRPCClient {
-	methodLimiters := map[string]*rate.Limiter{
-		rpcMethodGetTransaction:          newRPCMethodLimiter(),
-		rpcMethodGetSignaturesForAddress: newRPCMethodLimiter(),
-		rpcMethodGetBlocks:               newRPCMethodLimiter(),
-		rpcMethodGetBlock:                newRPCMethodLimiter(),
-		rpcMethodGetBlockHeight:          newRPCMethodLimiter(),
+	methodComponents := map[string]*methodComponents{
+		rpcMethodGetTransaction:          {limiter: newRPCMethodLimiter()},
+		rpcMethodGetSignaturesForAddress: {limiter: newRPCMethodLimiter()},
+		rpcMethodGetBlocks:               {limiter: newRPCMethodLimiter()},
+		rpcMethodGetBlock:                {limiter: newRPCMethodLimiter()},
+		rpcMethodGetBlockHeight:          {limiter: newRPCMethodLimiter()},
 	}
 
 	return &MutexRPCClient{
-		rpcClient:      rpcClient,
-		methodLimiters: methodLimiters,
+		rpcClient:   rpcClient,
+		methodComps: methodComponents,
 	}
 }
 
@@ -60,12 +66,20 @@ func withRPCLimits[T any](
 ) (T, error) {
 	var zero T
 
-	if lim := c.methodLimiters[method]; lim != nil {
-		if err := lim.Wait(ctx); err != nil {
-			return zero, err
-		}
+	methodComp := c.methodComps[method]
+	if methodComp == nil {
+		return zero, fmt.Errorf("method %s not found in methodComps", method)
 	}
 
+	// lock per method
+	methodComp.mu.Lock()
+	defer methodComp.mu.Unlock()
+
+	if err := methodComp.limiter.Wait(ctx); err != nil {
+		return zero, err
+	}
+
+	// lock per rpc call
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

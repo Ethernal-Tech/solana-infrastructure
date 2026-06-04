@@ -78,7 +78,7 @@ type StorageHandler interface {
 	// the event, the public key (address) of the Solana program that emitted the event, the event
 	// name as registered in the [ProgramEventSpecs] config, and the deserialized event itself. If
 	// the method returns an error, the tracker will terminate immediately.
-	StoreEvent(StorageTransaction, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
+	StoreEvent(StorageTransaction, uint64, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
 
 	// UseTransactions is invoked exactly once by the tracker during startup, that is, when the
 	// [Start] method is called. This method should return true if the storage backend supports
@@ -120,6 +120,8 @@ type TxStorageHandler interface {
 	FinalizeProcessedTransaction(txSignature solana.Signature) error
 	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
 	GetLatestFinalizedBlockNumber() (uint64, error)
+
+	GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error)
 }
 
 type BoltStorageHandler struct {
@@ -133,6 +135,7 @@ var _ StorageHandler = &BoltStorageHandler{}
 type EventRecord struct {
 	ID              uint64                 `json:"id"`
 	Slot            uint64                 `json:"slot"`
+	BlockNumber     uint64                 `json:"block_number"`
 	TxSignature     string                 `json:"tx_signature"`
 	Program         string                 `json:"program"`
 	EventType       string                 `json:"event_type"`
@@ -356,6 +359,7 @@ func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) er
 func (b *BoltStorageHandler) StoreEvent(
 	tx StorageTransaction,
 	slot uint64,
+	blockNumber uint64,
 	txSignature solana.Signature,
 	programID solana.PublicKey,
 	eventName string,
@@ -608,6 +612,39 @@ func (b *BoltStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 				}
 
 				if record.Slot == slot {
+					results = append(results, record)
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
+	var results []EventRecord
+
+	err := b.db.View(func(tx *bolt.Tx) error {
+		for _, bucketName := range [][]byte{unprocessedEventsBucket, processedEventsBucket} {
+			bucket := tx.Bucket(bucketName)
+			if bucket == nil {
+				continue
+			}
+
+			cursor := bucket.Cursor()
+
+			for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+				var record EventRecord
+				if err := json.Unmarshal(v, &record); err != nil {
+					return fmt.Errorf("failed to unmarshal event record: %w", err)
+				}
+
+				if record.BlockNumber == blockNumber {
 					results = append(results, record)
 				}
 			}

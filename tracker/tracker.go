@@ -25,6 +25,9 @@ type EventNotification struct {
 	// SlotNumber is the number of the slot in which the tracked event was emitted.
 	SlotNumber uint64
 
+	// BlockNumber is the number of the block in which the transaction was executed.
+	BlockNumber uint64
+
 	// TxSignature is the signature of the transaction that generated the event.
 	TxSignature solana.Signature
 
@@ -162,20 +165,16 @@ func (t *EventTracker) Start(ctx context.Context) {
 		t.runTransactionPolling(ctx)
 	}()
 
-	<-ctx.Done()
 	t.logger.Info("Context done, stopping event tracker")
 	wg.Wait()
 }
 
 func (t *EventTracker) runChainHeadRefresh(ctx context.Context) {
-	ticker := time.NewTicker(t.pollTime * 10)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		default:
 			if err := t.refreshChainHead(ctx); err != nil {
 				t.logger.Warn(fmt.Sprintf("Failed to refresh chain head: %s", err.Error()))
 			}
@@ -184,14 +183,11 @@ func (t *EventTracker) runChainHeadRefresh(ctx context.Context) {
 }
 
 func (t *EventTracker) runTransactionPolling(ctx context.Context) {
-	ticker := time.NewTicker(t.pollTime)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		default:
 			t.logger.Debug("Polling for new events")
 
 			lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
@@ -203,7 +199,7 @@ func (t *EventTracker) runTransactionPolling(ctx context.Context) {
 
 			// Force tx processing if there are unprocessed tx signatures
 			// before querying new transactions
-			lastQueriedTxSignature := t.getLastQueriedTxSignature()
+			lastQueriedTxSignature := t.lastQueriedTxSignature
 			if lastQueriedTxSignature != lastProcessedTxSignature {
 				if err := t.fetchNextGetFullTxBySignature(ctx); err != nil {
 					t.logger.Warn(fmt.Sprintf("Failed to fetch next full tx by signature: %s", err.Error()))
@@ -217,34 +213,6 @@ func (t *EventTracker) runTransactionPolling(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func (t *EventTracker) getChainHeadSlot() uint64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.chainHeadSlot
-}
-
-func (t *EventTracker) setChainHeadSlot(slot uint64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.chainHeadSlot = slot
-}
-
-func (t *EventTracker) getLastQueriedTxSignature() solana.Signature {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.lastQueriedTxSignature
-}
-
-func (t *EventTracker) setLastQueriedTxSignature(sig solana.Signature) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.lastQueriedTxSignature = sig
 }
 
 func (t *EventTracker) getLastUnprocessedTxSignature() (solana.Signature, error) {
@@ -278,8 +246,8 @@ func (t *EventTracker) initialize() error {
 		return err
 	}
 
-	if latestBlockPoint != nil && latestBlockPoint.BlockSlot > t.getChainHeadSlot() {
-		t.setChainHeadSlot(latestBlockPoint.BlockSlot)
+	if latestBlockPoint != nil && latestBlockPoint.BlockSlot > t.chainHeadSlot {
+		t.chainHeadSlot = latestBlockPoint.BlockSlot
 	}
 
 	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
@@ -297,15 +265,15 @@ func (t *EventTracker) initialize() error {
 	}
 
 	if len(unprocessedTxSignatures) > 0 {
-		t.setLastQueriedTxSignature(unprocessedTxSignatures[len(unprocessedTxSignatures)-1])
+		t.lastQueriedTxSignature = unprocessedTxSignatures[len(unprocessedTxSignatures)-1]
 	} else {
 		// If there are no unprocessed tx signatures, use the last processed tx signature
 		// as the last queried tx signature so we can continue querying for new transactions
 		// If empty it's a first run, so we need to start from the beginning
 		if lastProcessedTxSignature != (solana.Signature{}) {
-			t.setLastQueriedTxSignature(lastProcessedTxSignature)
+			t.lastQueriedTxSignature = lastProcessedTxSignature
 		} else {
-			t.setLastQueriedTxSignature(solana.Signature{})
+			t.lastQueriedTxSignature = solana.Signature{}
 		}
 	}
 
@@ -437,8 +405,37 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 				innerActionHash = sha256.Sum256(payloadBytes)
 			}
 
+			block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
+				result, err := t.client.GetBlockWithOpts(ctx, transactionResponse.Slot, &rpc.GetBlockOpts{
+					TransactionDetails:             rpc.TransactionDetailsNone,
+					MaxSupportedTransactionVersion: new(uint64),
+					Commitment:                     t.commitment,
+				})
+				if err != nil {
+					return nil, ErrRetryTryAgain
+				}
+
+				return result, nil
+			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+			if err != nil {
+				return fmt.Errorf("failed to get block for event at slot %d: %w", transactionResponse.Slot, err)
+			}
+
+			if block == nil {
+				return fmt.Errorf("no block found at slot %d for transaction %s", transactionResponse.Slot, txSignature.String())
+			}
+
+			if block.BlockHeight != nil {
+				err = t.storage.StoreLatestFinalizedBlockNumber(*block.BlockHeight)
+				if err != nil {
+					return fmt.Errorf("failed to store latest finalized block number for transaction %s: %w",
+						txSignature.String(), err)
+				}
+			}
+
 			event := EventNotification{
 				SlotNumber:      transactionResponse.Slot,
+				BlockNumber:     *block.BlockHeight,
 				TxSignature:     txSignature,
 				InnerActionHash: innerActionHash,
 				Program:         programID,
@@ -456,6 +453,7 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 			err = t.storage.StoreEvent(
 				nil,
 				event.SlotNumber,
+				event.BlockNumber,
 				event.TxSignature,
 				event.Program,
 				event.EventName,
@@ -464,33 +462,6 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 			)
 			if err != nil {
 				return fmt.Errorf("failed to store event: %w", err)
-			}
-
-			block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
-				result, err := t.client.GetBlockWithOpts(ctx, event.SlotNumber, &rpc.GetBlockOpts{
-					TransactionDetails:             rpc.TransactionDetailsNone,
-					MaxSupportedTransactionVersion: new(uint64),
-					Commitment:                     t.commitment,
-				})
-				if err != nil {
-					return nil, ErrRetryTryAgain
-				}
-
-				return result, nil
-			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
-			if err != nil {
-				return fmt.Errorf("failed to get block: %w", err)
-			}
-
-			if block == nil {
-				return fmt.Errorf("no block found at slot %d", event.SlotNumber)
-			}
-
-			if block.BlockHeight != nil {
-				err = t.storage.StoreLatestFinalizedBlockNumber(*block.BlockHeight)
-				if err != nil {
-					return fmt.Errorf("failed to store latest finalized block number: %w", err)
-				}
 			}
 		}
 	}
@@ -578,7 +549,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		// if it is, we skip the tx
 		// important for the first run
 		if lastQueriedTxSignature == (solana.Signature{}) {
-			chainHeadSlot := t.getChainHeadSlot()
+			chainHeadSlot := t.chainHeadSlot
 			if chainHeadSlot > txSignatures[i].Slot {
 				continue
 			}
@@ -589,7 +560,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 
 	// If we skipped all the txs, we need to set the last queried tx signature to the newest one
 	if len(unprocessedTxSignatures) == 0 {
-		t.setLastQueriedTxSignature(txSignatures[0].Signature)
+		t.lastQueriedTxSignature = txSignatures[0].Signature
 
 		return nil
 	}
@@ -599,7 +570,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		return fmt.Errorf("failed to push unprocessed transactions: %w", err)
 	}
 
-	t.setLastQueriedTxSignature(txSignatures[0].Signature)
+	t.lastQueriedTxSignature = txSignatures[0].Signature
 
 	t.logger.Debug("Fetched new transactions", "count",
 		len(txSignatures), "last queried tx signature", txSignatures[0].Signature.String())
@@ -616,10 +587,11 @@ func (t *EventTracker) catchUpLoop(
 	t.logger.Debug("Catching up loop", "last processed tx signature", beforeStart.String())
 
 	before := beforeStart
+	until := lastQueried
 
 	for {
 		txSignatures, err := ExecuteWithRetry(ctx, func(ctx context.Context) ([]*rpc.TransactionSignature, error) {
-			signatures, err := t.getSignaturesForAddressHelper(ctx, programID, &before, &t.lastQueriedTxSignature)
+			signatures, err := t.getSignaturesForAddressHelper(ctx, programID, &before, &until)
 			if err != nil {
 				return nil, ErrRetryTryAgain
 			}
@@ -636,6 +608,7 @@ func (t *EventTracker) catchUpLoop(
 			break
 		}
 
+		until = before
 		before = txSignatures[len(txSignatures)-1].Signature
 	}
 
@@ -698,7 +671,7 @@ func setupClientNew(config *EventTrackerConfig) error {
 		return fmt.Errorf("either config.Client or config.RPCEndpoint must be set")
 	}
 
-	config.Client = rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(config.RPCEndpoint, 100))
+	config.Client = rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(config.RPCEndpoint, 10))
 
 	return nil
 }
@@ -727,12 +700,10 @@ func getSlotsToQueryBlocks(slotsWithBlocks []uint64, threshold uint64) []uint64 
 // silently skipped and the previously stored chain head remains valid.
 // Only storage write errors are returned; RPC/fetch failures are non-fatal.
 func (t *EventTracker) refreshChainHead(ctx context.Context) error {
-	chainHeadSlot := t.getChainHeadSlot()
+	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", t.chainHeadSlot))
 
-	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", chainHeadSlot))
-
-	startSlot := chainHeadSlot
-	endSlot := chainHeadSlot + t.chainHeadSlotOffset
+	startSlot := t.chainHeadSlot
+	endSlot := t.chainHeadSlot + t.chainHeadSlotOffset
 
 	slotsWithBlocks, err := t.client.GetBlocks(ctx, startSlot, &endSlot, rpc.CommitmentConfirmed)
 	if err != nil {
@@ -755,7 +726,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 	t.logger.Debug("Slots to query blocks", "count", len(slotsToQueryBlocks), "slots", slotsToQueryBlocks)
 
 	for _, slot := range slotsToQueryBlocks {
-		if slot == chainHeadSlot {
+		if slot == t.chainHeadSlot {
 			continue
 		}
 
@@ -803,8 +774,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 			"hash", block.Blockhash,
 			"number", blockNumber)
 
-		chainHeadSlot = slot
-		t.setChainHeadSlot(slot)
+		t.chainHeadSlot = slot
 	}
 
 	if bp.BlockSlot > 0 {
