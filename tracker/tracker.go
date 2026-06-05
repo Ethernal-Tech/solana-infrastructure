@@ -675,7 +675,7 @@ func setupClientNew(config *EventTrackerConfig) error {
 		return fmt.Errorf("either config.Client or config.RPCEndpoint must be set")
 	}
 
-	config.Client = rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(config.RPCEndpoint, 10))
+	config.Client = rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(config.RPCEndpoint, 7))
 
 	return nil
 }

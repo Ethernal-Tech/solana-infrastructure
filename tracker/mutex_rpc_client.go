@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	rpcMethodLimitCount  = 40
+	rpcMethodLimitCount  = 30
 	rpcMethodLimitWindow = 10 * time.Second
 )
 
