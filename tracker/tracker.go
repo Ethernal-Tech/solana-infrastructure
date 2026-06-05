@@ -558,8 +558,14 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 	}
 
 	// If we skipped all the txs, we need to set the last queried tx signature to the newest one
+	// and set the last processed transaction to the latest one
 	if len(unprocessedTxSignatures) == 0 {
 		t.lastQueriedTxSignature = txSignatures[0].Signature
+
+		err = t.storage.SetLastProcessedTransaction(txSignatures[0].Signature)
+		if err != nil {
+			return fmt.Errorf("failed to set last processed transaction on start: %w", err)
+		}
 
 		return nil
 	}
