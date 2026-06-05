@@ -569,7 +569,9 @@ func (b *BoltStorageHandler) GetLatestFinalizedBlockNumber() (uint64, error) {
 			return fmt.Errorf("cannot find latestFinalizedBlockNumber bucket")
 		}
 
-		result = decodeUint64(bucket.Get(latestFinalizedBlockNumberKey))
+		if bnBytes := bucket.Get(latestFinalizedBlockNumberKey); len(bnBytes) > 0 {
+			result = decodeUint64(bnBytes)
+		}
 
 		return nil
 	})
