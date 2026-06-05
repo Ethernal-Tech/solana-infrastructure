@@ -189,8 +189,6 @@ func (t *EventTracker) runTransactionPolling(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			t.logger.Debug("Polling for new events")
-
 			lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
 			if err != nil {
 				t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
@@ -288,18 +286,16 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 		return err
 	}
 
-	t.logger.Debug("Fetching next full tx by signature", "tx signature", txSignature.String())
-
 	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
 	if err != nil {
 		return err
 	}
 
 	if txSignature == (solana.Signature{}) || txSignature == lastProcessedTxSignature {
-		t.logger.Debug("Transaction already processed")
-
 		return nil
 	}
+
+	t.logger.Debug("Fetching next full tx by signature", "tx signature", txSignature.String())
 
 	transactionResponse, err := t.client.GetTransaction(ctx, txSignature, &rpc.GetTransactionOpts{
 		Commitment:                     t.commitment,
