@@ -94,9 +94,6 @@ func NewMutexRPCClient(rpcClient *rpc.Client, config *RPCMethodLimitsConfig) *Mu
 		}
 	}
 
-	fmt.Println("config", config)
-	fmt.Println("GetBlock", config.GetBlock)
-
 	methodComponents := map[string]*methodComponents{
 		rpcMethodGetBalance:             {limiter: newRPCMethodLimiter(rpcMethodLimitWindow, config.GetBalance)},
 		rpcMethodGetTokenAccountBalance: {limiter: newRPCMethodLimiter(rpcMethodLimitWindow, config.GetTokenAccountBalance)},
