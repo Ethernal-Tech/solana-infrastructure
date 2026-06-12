@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/common"
 	"github.com/gagliardetto/solana-go"
 	alt "github.com/gagliardetto/solana-go/programs/address-lookup-table"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -59,12 +60,25 @@ type ITxRetriever interface {
 }
 
 type Provider struct {
-	rpcClient *rpc.Client
+	rpcClient *common.MutexRPCClient
 }
 
-func NewProvider(endpoint string) (*Provider, error) {
+func NewProvider(endpoint string, config *common.RPCMethodLimitsConfig) (*Provider, error) {
+	globalRPSLimit := 7
+
+	if config != nil {
+		if config.GlobalRPSLimit == 0 {
+			return nil, fmt.Errorf("global RPS limit cannot be 0")
+		}
+
+		globalRPSLimit = config.GlobalRPSLimit
+	}
+
 	return &Provider{
-		rpcClient: rpc.New(endpoint),
+		rpcClient: common.NewMutexRPCClient(
+			common.NewRateLimitedRPCClient(endpoint, globalRPSLimit, nil),
+			config,
+		),
 	}, nil
 }
 
@@ -202,7 +216,18 @@ func (p *Provider) GetSignaturesForAddress(
 func (p *Provider) GetAddressLookupTable(
 	ctx context.Context, address solana.PublicKey,
 ) (*alt.AddressLookupTableState, error) {
-	return alt.GetAddressLookupTable(ctx, p.rpcClient, address)
+	account, err := p.rpcClient.GetAccountInfoWithOpts(ctx, address, &rpc.GetAccountInfoOpts{
+		Encoding: solana.EncodingBase64,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if account == nil {
+		return nil, fmt.Errorf("account not found")
+	}
+
+	return alt.DecodeAddressLookupTableState(account.GetBinary())
 }
 
 func (p *Provider) SimulateTransaction(
@@ -246,7 +271,7 @@ func (p *Provider) WaitForSignature(
 			return ctx.Err()
 		case <-time.After(maxWaitTime):
 			return fmt.Errorf("timeout while waiting for transaction: %s", sig.String())
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(time.Second):
 		}
 	}
 }

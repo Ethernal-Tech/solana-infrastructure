@@ -13,6 +13,7 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/hashicorp/go-hclog"
 
+	"github.com/Ethernal-Tech/solana-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
 	binary "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
@@ -53,6 +54,7 @@ type EventSubscriber interface {
 type EventTrackerConfig struct {
 	RPCEndpoint            string
 	Client                 *rpc.Client
+	RPCMethodLimitsConfig  *common.RPCMethodLimitsConfig
 	TrackedPrograms        map[string]ProgramEventSpecs
 	Commitment             string
 	Logger                 hclog.Logger
@@ -63,7 +65,7 @@ type EventTrackerConfig struct {
 }
 
 type EventTracker struct {
-	client                 *MutexRPCClient
+	client                 *common.MutexRPCClient
 	storage                store.StorageHandler
 	trackedPrograms        map[solana.PublicKey]ProgramEventSpecs
 	commitment             rpc.CommitmentType
@@ -126,7 +128,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 	}
 
 	t := &EventTracker{
-		client:                 NewMutexRPCClient(config.Client),
+		client:                 common.NewMutexRPCClient(config.Client, config.RPCMethodLimitsConfig),
 		storage:                storage,
 		trackedPrograms:        trackedPrograms,
 		commitment:             commitment,
@@ -675,7 +677,12 @@ func setupClientNew(config *EventTrackerConfig) error {
 		return fmt.Errorf("either config.Client or config.RPCEndpoint must be set")
 	}
 
-	config.Client = rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(config.RPCEndpoint, 7))
+	globalRPSLimit := 7
+	if config.RPCMethodLimitsConfig != nil {
+		globalRPSLimit = config.RPCMethodLimitsConfig.GlobalRPSLimit
+	}
+
+	config.Client = common.NewRateLimitedRPCClient(config.RPCEndpoint, globalRPSLimit, config.Logger)
 
 	return nil
 }
