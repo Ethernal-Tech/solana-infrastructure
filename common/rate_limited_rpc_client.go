@@ -184,6 +184,10 @@ const (
 // rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(endpoint, rps)), but with an
 // HTTP transport that logs the X-Ratelimit-*/Retry-After response headers
 // whenever the node responds with 429. A nil logger falls back to hclog.Default().
+//
+// When apiKey is non-empty it is appended to the endpoint as the "api_key"
+// query parameter (e.g. for OrbitFlare endpoints); pass "" for endpoints that
+// do not require a key or that already embed credentials in the URL.
 func NewRateLimitedRPCClient(endpoint string, rps int, logger hclog.Logger) *rpc.Client {
 	transport := &http.Transport{
 		IdleConnTimeout:     defaultHTTPTimeout,

@@ -70,6 +70,9 @@ type MutexRPCClient struct {
 type methodComponents struct {
 	limiter *rate.Limiter
 	mu      sync.Mutex
+	// cooldownUntil gates calls to this method after a 429 response.
+	// Guarded by mu. Only affects this method, never the whole client.
+	cooldownUntil time.Time
 }
 
 func NewMutexRPCClient(rpcClient *rpc.Client, config *RPCMethodLimitsConfig) *MutexRPCClient {
@@ -134,7 +137,7 @@ func newRPCMethodLimiter(rpcMethodLimitWindow time.Duration, rpcMethodLimitCount
 	)
 }
 
-const defaultRetryAfter = time.Second
+const defaultRetryAfter = 10 * time.Second
 
 // parseRetryAfter interprets the Retry-After response header (seconds or HTTP-date).
 // Returns defaultRetryAfter when the header is missing or unparseable.
@@ -170,6 +173,40 @@ func (e *rateLimitError) Error() string {
 	return fmt.Sprintf("rate limited (429), retry after %v", e.retryAfter)
 }
 
+// rateLimitRetryAfter reports whether err is a 429 rate-limit error and, if so,
+// how long to back off. It recognises three shapes:
+//   - *rateLimitError: produced by our getSignatureStatuses callback, carries the
+//     precise Retry-After header.
+//   - *jsonrpc.RPCError with Code 429: what solana-go returns when the node sends
+//     a 429 with a well-formed JSON-RPC error body (the common devnet case).
+//   - *jsonrpc.HTTPError with Code 429: what solana-go returns when the 429 body
+//     could not be parsed into an RPC response.
+//
+// Only *rateLimitError carries the real Retry-After; the other two only expose
+// the status code, so they fall back to defaultRetryAfter.
+func rateLimitRetryAfter(err error) (time.Duration, bool) {
+	if err == nil {
+		return 0, false
+	}
+
+	var rl *rateLimitError
+	if errors.As(err, &rl) {
+		return rl.retryAfter, true
+	}
+
+	var rpcErr *jsonrpc.RPCError
+	if errors.As(err, &rpcErr) && rpcErr.Code == http.StatusTooManyRequests {
+		return defaultRetryAfter, true
+	}
+
+	var httpErr *jsonrpc.HTTPError
+	if errors.As(err, &httpErr) && httpErr.Code == http.StatusTooManyRequests {
+		return defaultRetryAfter, true
+	}
+
+	return 0, false
+}
+
 func withRPCLimits[T any](
 	c *MutexRPCClient,
 	ctx context.Context,
@@ -187,15 +224,34 @@ func withRPCLimits[T any](
 	methodComp.mu.Lock()
 	defer methodComp.mu.Unlock()
 
-	if err := methodComp.limiter.Wait(ctx); err != nil {
-		return zero, err
+	for {
+		// Honor any pending 429 cooldown for THIS method only. Holding
+		// methodComp.mu here serializes same-method callers behind the backoff
+		// without ever blocking other methods or holding the global c.mu.
+		if wait := time.Until(methodComp.cooldownUntil); wait > 0 {
+			select {
+			case <-ctx.Done():
+				return zero, ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+
+		if err := methodComp.limiter.Wait(ctx); err != nil {
+			return zero, err
+		}
+
+		// lock per rpc call
+		c.mu.Lock()
+		result, err := call()
+		c.mu.Unlock()
+
+		retryAfter, rateLimited := rateLimitRetryAfter(err)
+		if !rateLimited {
+			return result, err
+		}
+
+		methodComp.cooldownUntil = time.Now().UTC().Add(retryAfter)
 	}
-
-	// lock per rpc call
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	return call()
 }
 
 func (c *MutexRPCClient) GetBalance(
@@ -266,8 +322,9 @@ func (c *MutexRPCClient) SendTransactionWithOpts(
 	})
 }
 
-// This method is heavily used in testnet tests
-// so we added a retry mechanism to handle 429 errors.
+// GetSignatureStatuses uses a callback so it can read the precise Retry-After
+// header on a 429. The retry/backoff itself is handled centrally by
+// withRPCLimits, which honors the returned *rateLimitError.
 func (c *MutexRPCClient) GetSignatureStatuses(
 	ctx context.Context,
 	searchTransactionHistory bool,
@@ -278,29 +335,6 @@ func (c *MutexRPCClient) GetSignatureStatuses(
 		params = append(params, rpc.M{"searchTransactionHistory": true})
 	}
 
-	for {
-		out, err := c.getSignatureStatusesOnce(ctx, params)
-		if err == nil {
-			return out, nil
-		}
-
-		var rateLimited *rateLimitError
-		if !errors.As(err, &rateLimited) {
-			return nil, err
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(rateLimited.retryAfter):
-		}
-	}
-}
-
-func (c *MutexRPCClient) getSignatureStatusesOnce(
-	ctx context.Context,
-	params []interface{},
-) (*rpc.GetSignatureStatusesResult, error) {
 	return withRPCLimits(c, ctx, rpcMethodGetSignatureStatuses, func() (*rpc.GetSignatureStatusesResult, error) {
 		var out *rpc.GetSignatureStatusesResult
 
