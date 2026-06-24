@@ -253,6 +253,18 @@ func (txSnd *TxSender) buildInstructions(
 		}
 
 		return []solana.Instruction{createIx}, nil
+	case InstructionTypeUpdateMinBridgingAmount:
+		tx, ok := txDto.(UpdateMinBridgingAmountDto)
+		if !ok {
+			return nil, fmt.Errorf("expected UpdateMinBridgingAmountDto for type %s, got %T", instructionType, txDto)
+		}
+
+		updateMinBridgingAmountIx, err := txSnd.buildUpdateMinBridgingAmountInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build update min bridging amount instruction: %w", err)
+		}
+
+		return []solana.Instruction{updateMinBridgingAmountIx}, nil
 	default:
 		return nil, fmt.Errorf("unsupported transaction type: %s", instructionType)
 	}
@@ -1210,4 +1222,43 @@ func (txSnd *TxSender) buildCreateInstruction(tx CreateInstructionDto) (solana.I
 		receiverPubKey,
 		mintTokenAddress,
 	).Build(), nil
+}
+
+func (txSnd *TxSender) buildUpdateMinBridgingAmountInstruction(tx UpdateMinBridgingAmountDto) (
+	solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	programID := tx.ProgramID
+
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, true); err != nil {
+		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
+	}
+
+	authorityPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
+	}
+
+	if err := txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(programID),
+		WithFeeConfigPDA(),
+		WithTokenRegistryPDA(tx.TokenID),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	updateMinBridgingAmountIx, err := skyline_program.NewUpdateMinBridgingAmountInstruction(
+		tx.TokenID,
+		tx.MinBridgingAmount,
+		authorityPubKey,
+		txSnd.instructionConfig.feeConfigPDA,
+		txSnd.instructionConfig.tokenRegistryPDA,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build update min bridging amount instruction: %w", err)
+	}
+
+	return withProgramID(updateMinBridgingAmountIx, programID)
 }

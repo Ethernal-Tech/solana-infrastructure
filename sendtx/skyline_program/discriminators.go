@@ -19,6 +19,7 @@ var (
 	Event_FeeConfigUpdatedEvent          = [8]byte{139, 188, 235, 116, 222, 55, 95, 201}
 	Event_HotWalletIncrementEvent        = [8]byte{59, 172, 72, 125, 228, 239, 221, 175}
 	Event_LockUnlockTokenRegisteredEvent = [8]byte{190, 93, 87, 189, 153, 86, 187, 120}
+	Event_MinBridgingAmountUpdatedEvent  = [8]byte{129, 249, 169, 118, 98, 59, 181, 131}
 	Event_MintBurnTokenRegisteredEvent   = [8]byte{45, 109, 50, 56, 70, 204, 25, 113}
 	Event_ProgramVersionUpdatedEvent     = [8]byte{92, 102, 239, 253, 213, 16, 58, 87}
 	Event_TransactionExecutedEvent       = [8]byte{138, 185, 121, 218, 65, 145, 254, 24}
@@ -35,5 +36,6 @@ var (
 	Instruction_RegisterLockUnlockToken = [8]byte{102, 136, 172, 174, 201, 166, 219, 233}
 	Instruction_RegisterMintBurnToken   = [8]byte{20, 106, 92, 113, 59, 41, 253, 128}
 	Instruction_UpdateFeeConfig         = [8]byte{104, 184, 103, 242, 88, 151, 107, 20}
+	Instruction_UpdateMinBridgingAmount = [8]byte{154, 223, 132, 123, 178, 94, 16, 41}
 	Instruction_UpdateProgramVersion    = [8]byte{235, 132, 215, 225, 213, 43, 43, 38}
 )

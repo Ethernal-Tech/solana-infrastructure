@@ -716,6 +716,60 @@ func NewUpdateFeeConfigInstruction(
 	), nil
 }
 
+// Builds a "update_min_bridging_amount" instruction.
+// Update the minimum bridging amount for a registered token. //  // Only callable by the bridge authority. The token must already be registered // via `register_lock_unlock_token` or `register_mint_burn_token`. //  // # Arguments // * `token_id`            - Gateway-compatible identifier of the registered token // * `min_bridging_amount` - New minimum raw token amount per `bridge_request` //  // # Errors // * `CustomError::Unauthorized` - Signer is not the bridge authority
+func NewUpdateMinBridgingAmountInstruction(
+	// Params:
+	tokenIdParam uint16,
+	minBridgingAmountParam uint64,
+
+	// Accounts:
+	authorityAccount solanago.PublicKey,
+	feeConfigAccount solanago.PublicKey,
+	tokenRegistryAccount solanago.PublicKey,
+) (solanago.Instruction, error) {
+	buf__ := new(bytes.Buffer)
+	enc__ := binary.NewBorshEncoder(buf__)
+
+	// Encode the instruction discriminator.
+	err := enc__.WriteBytes(Instruction_UpdateMinBridgingAmount[:], false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
+	}
+	{
+		// Serialize `tokenIdParam`:
+		err = enc__.Encode(tokenIdParam)
+		if err != nil {
+			return nil, errors.NewField("tokenIdParam", err)
+		}
+		// Serialize `minBridgingAmountParam`:
+		err = enc__.Encode(minBridgingAmountParam)
+		if err != nil {
+			return nil, errors.NewField("minBridgingAmountParam", err)
+		}
+	}
+	accounts__ := solanago.AccountMetaSlice{}
+
+	// Add the accounts to the instruction.
+	{
+		// Account 0 "authority": Read-only, Signer, Required
+		// The bridge admin. Must match `fee_config.authority`.
+		accounts__.Append(solanago.NewAccountMeta(authorityAccount, false, true))
+		// Account 1 "fee_config": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(feeConfigAccount, false, false))
+		// Account 2 "token_registry": Writable, Non-signer, Required
+		// TokenRegistry PDA for the given `token_id`.
+		accounts__.Append(solanago.NewAccountMeta(tokenRegistryAccount, true, false))
+	}
+
+	// Create the instruction.
+	return solanago.NewInstruction(
+		ProgramID,
+		accounts__,
+		buf__.Bytes(),
+	), nil
+}
+
 // Builds a "update_program_version" instruction.
 // Updates `ProgramConfig.version_string` to match a new deployment. //  // Program upgrades do not write to this PDA; the bridge authority must call this // after upgrading so integrations reading the account see the correct version. //  // # Arguments // * `version_string` - Semver display string (at most 32 bytes) //  // # Errors // * `Unauthorized`         - Signer is not `ProgramConfig.authority` // * `VersionStringTooLong`   - `version_string` exceeds storage limit
 func NewUpdateProgramVersionInstruction(

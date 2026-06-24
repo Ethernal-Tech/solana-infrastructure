@@ -25,6 +25,7 @@ const (
 	InstructionTypeRegisterTokensMintBurn   InstructionType = "register_tokens_mint_burn"
 	InstructionTypeUpdateFeeConfig          InstructionType = "update_fee_config"
 	InstructionTypeUpdateProgramVersion     InstructionType = "update_program_version"
+	InstructionTypeUpdateMinBridgingAmount  InstructionType = "update_min_bridging_amount"
 )
 
 type InstructionConfig struct {

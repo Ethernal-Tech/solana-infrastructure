@@ -156,3 +156,10 @@ type CreateInstructionDto struct {
 	MintTokenAddress  string
 	ReceiverPublicKey string
 }
+
+type UpdateMinBridgingAmountDto struct {
+	ProgramID         solana.PublicKey
+	AuthorityAddr     string
+	TokenID           uint16
+	MinBridgingAmount uint64
+}

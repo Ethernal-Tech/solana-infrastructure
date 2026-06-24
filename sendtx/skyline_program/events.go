@@ -43,6 +43,13 @@ func ParseAnyEvent(eventData []byte) (any, error) {
 			return nil, fmt.Errorf("failed to unmarshal event as LockUnlockTokenRegisteredEvent: %w", err)
 		}
 		return value, nil
+	case Event_MinBridgingAmountUpdatedEvent:
+		value := new(MinBridgingAmountUpdatedEvent)
+		err := value.UnmarshalWithDecoder(decoder)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event as MinBridgingAmountUpdatedEvent: %w", err)
+		}
+		return value, nil
 	case Event_MintBurnTokenRegisteredEvent:
 		value := new(MintBurnTokenRegisteredEvent)
 		err := value.UnmarshalWithDecoder(decoder)
@@ -140,6 +147,23 @@ func ParseEvent_LockUnlockTokenRegisteredEvent(eventData []byte) (*LockUnlockTok
 	err = event.UnmarshalWithDecoder(decoder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal event of type LockUnlockTokenRegisteredEvent: %w", err)
+	}
+	return event, nil
+}
+
+func ParseEvent_MinBridgingAmountUpdatedEvent(eventData []byte) (*MinBridgingAmountUpdatedEvent, error) {
+	decoder := binary.NewBorshDecoder(eventData)
+	discriminator, err := decoder.ReadDiscriminator()
+	if err != nil {
+		return nil, fmt.Errorf("failed to peek discriminator: %w", err)
+	}
+	if discriminator != Event_MinBridgingAmountUpdatedEvent {
+		return nil, fmt.Errorf("expected discriminator %v, got %s", Event_MinBridgingAmountUpdatedEvent, binary.FormatDiscriminator(discriminator))
+	}
+	event := new(MinBridgingAmountUpdatedEvent)
+	err = event.UnmarshalWithDecoder(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal event of type MinBridgingAmountUpdatedEvent: %w", err)
 	}
 	return event, nil
 }

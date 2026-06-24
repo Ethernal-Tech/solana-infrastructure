@@ -507,6 +507,83 @@ func UnmarshalLockUnlockTokenRegisteredEvent(buf []byte) (*LockUnlockTokenRegist
 	return obj, nil
 }
 
+// Emitted when the authority updates `TokenRegistry.min_bridging_amount`.
+type MinBridgingAmountUpdatedEvent struct {
+	// Gateway-compatible uint16 identifier.
+	TokenId uint16 `json:"tokenId"`
+
+	// The SPL mint for this registry entry.
+	Mint solanago.PublicKey `json:"mint"`
+
+	// Updated minimum raw token amount allowed per bridge_request.
+	MinBridgingAmount uint64 `json:"minBridgingAmount"`
+}
+
+func (obj MinBridgingAmountUpdatedEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
+	// Serialize `TokenId`:
+	err = encoder.Encode(obj.TokenId)
+	if err != nil {
+		return errors.NewField("TokenId", err)
+	}
+	// Serialize `Mint`:
+	err = encoder.Encode(obj.Mint)
+	if err != nil {
+		return errors.NewField("Mint", err)
+	}
+	// Serialize `MinBridgingAmount`:
+	err = encoder.Encode(obj.MinBridgingAmount)
+	if err != nil {
+		return errors.NewField("MinBridgingAmount", err)
+	}
+	return nil
+}
+
+func (obj MinBridgingAmountUpdatedEvent) Marshal() ([]byte, error) {
+	buf := bytes.NewBuffer(nil)
+	encoder := binary.NewBorshEncoder(buf)
+	err := obj.MarshalWithEncoder(encoder)
+	if err != nil {
+		return nil, fmt.Errorf("error while encoding MinBridgingAmountUpdatedEvent: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (obj *MinBridgingAmountUpdatedEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
+	// Deserialize `TokenId`:
+	err = decoder.Decode(&obj.TokenId)
+	if err != nil {
+		return errors.NewField("TokenId", err)
+	}
+	// Deserialize `Mint`:
+	err = decoder.Decode(&obj.Mint)
+	if err != nil {
+		return errors.NewField("Mint", err)
+	}
+	// Deserialize `MinBridgingAmount`:
+	err = decoder.Decode(&obj.MinBridgingAmount)
+	if err != nil {
+		return errors.NewField("MinBridgingAmount", err)
+	}
+	return nil
+}
+
+func (obj *MinBridgingAmountUpdatedEvent) Unmarshal(buf []byte) error {
+	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	if err != nil {
+		return fmt.Errorf("error while unmarshaling MinBridgingAmountUpdatedEvent: %w", err)
+	}
+	return nil
+}
+
+func UnmarshalMinBridgingAmountUpdatedEvent(buf []byte) (*MinBridgingAmountUpdatedEvent, error) {
+	obj := new(MinBridgingAmountUpdatedEvent)
+	err := obj.Unmarshal(buf)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
 // Emitted when a MintBurn token is registered.
 // Gateway parity: TokenRegistered event in Gateway.sol
 //
