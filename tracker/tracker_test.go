@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -50,4 +51,24 @@ func TestGetSlotsToQueryBlocks(t *testing.T) {
 			require.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+func TestChainHeadCatchUpWait(t *testing.T) {
+	t.Parallel()
+
+	t.Run("enough blocks needs no wait", func(t *testing.T) {
+		t.Parallel()
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(13))
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(15))
+	})
+
+	t.Run("partial batch waits for remaining slots", func(t *testing.T) {
+		t.Parallel()
+		require.Equal(t, 2400*time.Millisecond, chainHeadCatchUpWait(7))
+	})
+
+	t.Run("empty result waits for full target", func(t *testing.T) {
+		t.Parallel()
+		require.Equal(t, 5200*time.Millisecond, chainHeadCatchUpWait(0))
+	})
 }

@@ -19,7 +19,14 @@ import (
 	"github.com/gagliardetto/solana-go"
 )
 
-const getSignaturesForAddressMaxLimit = 1000
+const (
+	getSignaturesForAddressMaxLimit = 1000
+
+	// chainHeadTargetBlockCount is the desired number of slots-with-blocks per
+	// refresh when near the chain head. Fewer results trigger a proportional wait.
+	chainHeadTargetBlockCount = 13
+	avgBlockTime              = 400 * time.Millisecond
+)
 
 // EventNotification represents a notification sent on the chEvent channel.
 type EventNotification struct {
@@ -178,8 +185,21 @@ func (t *EventTracker) runChainHeadRefresh(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			if err := t.refreshChainHead(ctx); err != nil {
+			idleWait, err := t.refreshChainHead(ctx)
+			if err != nil {
 				t.logger.Warn(fmt.Sprintf("Failed to refresh chain head: %s", err.Error()))
+			}
+
+			if idleWait > 0 {
+				t.logger.Debug("Chain head idle, waiting before next refresh",
+					"wait", idleWait,
+					"chainHeadSlot", t.chainHeadSlot)
+
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(idleWait):
+				}
 			}
 		}
 	}
@@ -706,11 +726,26 @@ func getSlotsToQueryBlocks(slotsWithBlocks []uint64, threshold uint64) []uint64 
 	return result
 }
 
+// chainHeadCatchUpWait returns how long to wait before the next refresh when
+// GetBlocks returned fewer slots-with-blocks than the target batch size.
+func chainHeadCatchUpWait(blocksWithSlots int) time.Duration {
+	if blocksWithSlots >= chainHeadTargetBlockCount {
+		return 0
+	}
+
+	slotsNeeded := chainHeadTargetBlockCount - blocksWithSlots
+
+	return time.Duration(slotsNeeded) * avgBlockTime
+}
+
 // refreshChainHead fetches the block at the given slot and persists it as the
 // latest block point. If the slot has no block (skipped/empty), the update is
 // silently skipped and the previously stored chain head remains valid.
 // Only storage write errors are returned; RPC/fetch failures are non-fatal.
-func (t *EventTracker) refreshChainHead(ctx context.Context) error {
+// When GetBlocks returns fewer than chainHeadTargetBlockCount slots, the
+// returned idleWait backs off proportionally so we do not poll in a tight loop
+// near the chain head.
+func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Duration, err error) {
 	t.logger.Debug(fmt.Sprintf("Refreshing chain head to slot %d", t.chainHeadSlot))
 
 	startSlot := t.chainHeadSlot
@@ -720,14 +755,14 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 	if err != nil {
 		t.logger.Warn(fmt.Sprintf("Failed to fetch blocks with limit to refresh head %d: %s", endSlot, err.Error()))
 
-		return nil
+		return 0, nil
 	}
 
 	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
 		t.chainHeadSlotOffset, endSlot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
 
 	if len(slotsWithBlocks) == 0 {
-		return nil
+		return chainHeadCatchUpWait(0), nil
 	}
 
 	var bp store.BlockPoint
@@ -756,11 +791,11 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 		if err != nil {
 			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
 
-			return fmt.Errorf("no block found at slot %d", slot)
+			return 0, fmt.Errorf("no block found at slot %d", slot)
 		}
 
 		if block == nil {
-			return fmt.Errorf("get block returned nil at slot %d", slot)
+			return 0, fmt.Errorf("get block returned nil at slot %d", slot)
 		}
 
 		var blockNumber uint64
@@ -777,7 +812,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 		}
 
 		if err := t.storage.StoreBlock(nil, bp); err != nil {
-			return err
+			return 0, err
 		}
 
 		t.logger.Debug("Stored block",
@@ -789,8 +824,8 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) error {
 	}
 
 	if bp.BlockSlot > 0 {
-		return t.storage.StoreLatestBlockPoint(nil, bp)
+		return chainHeadCatchUpWait(len(slotsWithBlocks)), t.storage.StoreLatestBlockPoint(nil, bp)
 	}
 
-	return nil
+	return chainHeadCatchUpWait(len(slotsWithBlocks)), nil
 }
