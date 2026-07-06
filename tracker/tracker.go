@@ -69,6 +69,7 @@ type EventTrackerConfig struct {
 	StartFromSlot          uint64
 	BlockRoundingThreshold uint64
 	EventSubscriber        EventSubscriber
+	DisableRateLimiting    bool
 }
 
 type EventTracker struct {
@@ -695,6 +696,12 @@ func setupClientNew(config *EventTrackerConfig) error {
 
 	if config.RPCEndpoint == "" {
 		return fmt.Errorf("either config.Client or config.RPCEndpoint must be set")
+	}
+
+	// if rate limiting is disabled, we use the default RPC client
+	if config.DisableRateLimiting {
+		config.Client = rpc.New(config.RPCEndpoint)
+		return nil
 	}
 
 	globalRPSLimit := 7
