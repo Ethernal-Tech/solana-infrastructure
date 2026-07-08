@@ -701,6 +701,7 @@ func setupClientNew(config *EventTrackerConfig) error {
 	// if rate limiting is disabled, we use the default RPC client
 	if config.DisableRateLimiting {
 		config.Client = rpc.New(config.RPCEndpoint)
+
 		return nil
 	}
 

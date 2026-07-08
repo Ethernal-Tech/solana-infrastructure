@@ -25,7 +25,7 @@ func GetAddressBalanceLamports(ctx context.Context, addr, jsonRPCAddr string) (m
 		return nil, err
 	}
 
-	return map[string]*big.Int{cardanowallet.AdaTokenName: big.NewInt(int64(balance))}, nil
+	return map[string]*big.Int{cardanowallet.AdaTokenName: new(big.Int).SetUint64(balance)}, nil
 }
 
 func GetAddressBalanceWithTokenNameLamports(

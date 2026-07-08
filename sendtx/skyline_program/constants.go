@@ -7,12 +7,6 @@ import solanago "github.com/gagliardetto/solana-go"
 
 // Constants defined in the IDL:
 
-// Seed string used to derive BridgingRequest Program Derived Addresses (PDAs).
-//
-// This seed is combined with the sender's public key to create unique
-// addresses for each bridging request account.
-var BRIDGING_REQUEST_SEED = []byte{98, 114, 105, 100, 103, 105, 110, 103, 95, 114, 101, 113, 117, 101, 115, 116}
-
 // Size of the account discriminator in bytes.
 //
 // The discriminator is an 8-byte prefix used by Anchor to identify

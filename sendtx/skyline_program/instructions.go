@@ -184,7 +184,7 @@ func NewBridgeTransactionInstruction(
 }
 
 // Builds a "bridge_vsu" instruction.
-// Create or approve a validator set update (VSU) for the bridge. //  // This instruction allows changing the set of validators that control bridge operations. // The first call creates a validator set change proposal, and subsequent calls from validators // approve the proposal. Requires approval from the current validator set meeting the consensus // threshold and maintains the same validation rules as initialization (unique validators, 4-10 count). //  // # Arguments // * `ctx` - The context containing accounts for creating or approving the validator set change // * `added` - Vector of new validator public keys to add // * `removed` - Vector of validator indexes to remove // * `batch_id` - The batch ID of the validator set change (must be greater than last_batch_id) //  // # Errors // * `MaxValidatorsExceeded` - If more than 10 validators would result from the change // * `MinValidatorsNotMet` - If fewer than 4 validators would result from the change // * `AddingExistingSigner` - If attempting to add a validator that already exists // * `InvalidBatchId` - If the batch_id is not greater than the last_batch_id // * `InvalidProposalHash` - If approving a proposal with a different hash than the original // * `NoSignersProvided` - If no validator signers are provided // * `NotEnoughSigners` - If insufficient current validators have signed (checked when threshold is met) // * `InvalidSigner` - If a signer is not in the current validator set
+// Create or approve a validator set update (VSU) for the bridge. //  // This instruction allows changing the set of validators that control bridge operations. // The first call creates a validator set change proposal, and subsequent calls from validators // approve the proposal. Requires approval from the current validator set meeting the consensus // threshold and maintains validation rules (unique validators, default-key rejection, // per-call max change, and resulting validator count bounds). //  // # Arguments // * `ctx` - The context containing accounts for creating or approving the validator set change // * `added` - Vector of new validator public keys to add // * `removed` - Vector of validator indexes to remove // * `batch_id` - The batch ID of the validator set change (must be greater than last_batch_id) //  // # Errors // * `MaxValidatorsChangeExceeded` - If `added` or `removed` exceeds `MAX_VALIDATORS_CHANGE` // * `MaxValidatorsExceeded` - If more than 128 validators would result from the change // * `MinValidatorsNotMet` - If fewer than 4 validators would result from the change // * `AddingExistingSigner` - If attempting to add a validator that already exists // * `InvalidBatchId` - If the batch_id is not greater than the last_batch_id // * `InvalidProposalHash` - If approving a proposal with a different hash than the original // * `NoSignersProvided` - If no validator signers are provided // * `NotEnoughSigners` - If insufficient current validators have signed (checked when threshold is met) // * `InvalidSigner` - If a signer is not in the current validator set
 func NewBridgeVsuInstruction(
 	// Params:
 	addedParam []solanago.PublicKey,
@@ -320,7 +320,7 @@ func NewHotWalletIncrementInstruction(
 }
 
 // Builds a "initialize" instruction.
-// Initializes the full bridge system: // 1. ValidatorSet — validators, threshold, bump // 2. Vault        — bump // 3. FeeConfig    — operational fee, relayer fee estimate, treasury, authority // 4. ProgramConfig — on-chain version metadata (readable without a tx) //  // # Arguments // * `ctx`                  - The instruction context // * `validators`           - Vector of validator public keys // * `last_id`              - Last known batch ID (for replay protection) // * `min_operational_fee`  - Minimum bridge tip sent to treasury (lamports) // * `bridge_fee`           - Estimated destination chain gas cost (lamports) //  // # Errors // * `ValidatorsNotUnique`    - Duplicate validators provided // * `MaxValidatorsExceeded`  - Too many validators // * `MinValidatorsNotMet`    - Too few validators
+// Initializes the full bridge system: // 1. ValidatorSet — validators, threshold, bump // 2. Vault        — bump // 3. FeeConfig    — operational fee, bridge fee estimate, treasury, authority // 4. ProgramConfig — on-chain version metadata (readable without a tx) //  // # Arguments // * `ctx`                  - The instruction context // * `validators`           - Vector of validator public keys // * `last_id`              - Last known batch ID (for replay protection) // * `min_operational_fee`  - Minimum bridge tip sent to treasury (lamports) // * `bridge_fee`           - Estimated destination chain gas cost (lamports) //  // # Errors // * `Unauthorized`           - Signer is not the program upgrade authority // * `ValidatorsNotUnique`    - Duplicate validators provided // * `MaxValidatorsExceeded`  - Too many validators // * `MinValidatorsNotMet`    - Too few validators
 func NewInitializeInstruction(
 	// Params:
 	validatorsParam []solanago.PublicKey,
@@ -335,6 +335,8 @@ func NewInitializeInstruction(
 	feeConfigAccount solanago.PublicKey,
 	programConfigAccount solanago.PublicKey,
 	treasuryAccount solanago.PublicKey,
+	programAccount solanago.PublicKey,
+	programDataAccount solanago.PublicKey,
 	systemProgramAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
@@ -385,7 +387,8 @@ func NewInitializeInstruction(
 	// Add the accounts to the instruction.
 	{
 		// Account 0 "signer": Writable, Signer, Required
-		// The signer who is initializing the bridge system
+		// The signer who is initializing the bridge system.
+		// Must be the program's upgrade authority (checked via `program_data`).
 		accounts__.Append(solanago.NewAccountMeta(signerAccount, true, true))
 		// Account 1 "validator_set": Writable, Non-signer, Required
 		// The validator set account to be initialized
@@ -402,7 +405,13 @@ func NewInitializeInstruction(
 		// Account 5 "treasury": Read-only, Non-signer, Required
 		// The treasury account that will receive operational fees
 		accounts__.Append(solanago.NewAccountMeta(treasuryAccount, false, false))
-		// Account 6 "system_program": Read-only, Non-signer, Required
+		// Account 6 "program": Read-only, Non-signer, Required, Address: CkTNcuk9EELmuR65eCfzKfz8XpDvJ27FPFHauGHVD1E9
+		// This program's executable account — used to derive / verify `program_data`.
+		accounts__.Append(solanago.NewAccountMeta(programAccount, false, false))
+		// Account 7 "program_data": Read-only, Non-signer, Required
+		// Program data account holding the upgrade authority.
+		accounts__.Append(solanago.NewAccountMeta(programDataAccount, false, false))
+		// Account 8 "system_program": Read-only, Non-signer, Required
 		// The system program for account creation
 		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
 	}
@@ -416,6 +425,7 @@ func NewInitializeInstruction(
 }
 
 // Builds a "register_lock_unlock_token" instruction.
+// Register a pre-existing SPL mint as a LockUnlock bridgeable token. //  // Whitelists an existing mint (e.g. WSOL, USDC) for bridging via lock/unlock: // on `bridge_request` tokens are transferred into the vault; on `bridge_transaction` // they are transferred back to the recipient. //  // Creates `TokenRegistry` (is_lock_unlock = true) and `TokenIdGuard` PDAs. //  // Only callable by the bridge authority. //  // # Arguments // * `ctx`                 - Instruction context // * `token_id`            - Unique gateway-compatible uint16 identifier // * `min_bridging_amount` - Minimum raw token amount allowed per bridge_request //  // # Errors // * `CustomError::Unauthorized` - Signer is not the bridge authority // * `AlreadyInUse`              - mint or token_id already registered (Anchor init)
 func NewRegisterLockUnlockTokenInstruction(
 	// Params:
 	tokenIdParam uint16,

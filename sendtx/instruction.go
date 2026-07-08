@@ -29,7 +29,8 @@ const (
 )
 
 type InstructionConfig struct {
-	programKey solana.PublicKey
+	programKey     solana.PublicKey
+	programDataKey solana.PublicKey
 
 	validatorSetPDA  solana.PublicKey
 	vaultPDA         solana.PublicKey
@@ -82,6 +83,32 @@ func WithProgramID(programID solana.PublicKey) InstructionConfigOption {
 		}
 
 		c.programKey = programID
+
+		return nil
+	}
+}
+
+func WithProgramDataAccount() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		if err := wallet.ValidatePublicKey(c.programKey, true); err != nil {
+			return fmt.Errorf("program ID is not set or invalid: %w", err)
+		}
+
+		programDataPDA, _, err := solana.FindProgramAddress(
+			[][]byte{
+				c.programKey.Bytes(),
+			},
+			solana.BPFLoaderUpgradeableProgramID,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to derive program data PDA: %w", err)
+		}
+
+		if err := wallet.ValidatePublicKey(programDataPDA, true); err != nil {
+			return fmt.Errorf("program data PDA is invalid: %w", err)
+		}
+
+		c.programDataKey = programDataPDA
 
 		return nil
 	}

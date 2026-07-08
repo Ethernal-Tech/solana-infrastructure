@@ -916,6 +916,7 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 
 	if err = txSnd.instructionConfig.ApplyOptions(
 		WithProgramID(programID),
+		WithProgramDataAccount(),
 		WithValidatorSetPDA(),
 		WithVaultPDA(),
 		WithFeeConfigPDA(),
@@ -935,6 +936,8 @@ func (txSnd *TxSender) buildInitializeInstruction(tx InitializeDto) (solana.Inst
 		txSnd.instructionConfig.feeConfigPDA,
 		txSnd.instructionConfig.programConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
+		txSnd.instructionConfig.programKey,
+		txSnd.instructionConfig.programDataKey,
 		txSnd.instructionConfig.systemProgramID,
 	)
 	if err != nil {
