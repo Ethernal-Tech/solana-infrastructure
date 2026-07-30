@@ -138,8 +138,8 @@ func (m *MockStorageHandler) GetProcessedEventCount() (int, error) {
 	return args.Get(0).(int), args.Error(1)
 }
 
-func (m *MockStorageHandler) PushUnprocessedTransactions(txSignatures []solana.Signature) error {
-	args := m.Called(txSignatures)
+func (m *MockStorageHandler) PushUnprocessedTransactions(txPoints []TxPoint) error {
+	args := m.Called(txPoints)
 
 	return args.Error(0)
 }
@@ -150,15 +150,15 @@ func (m *MockStorageHandler) RemoveProcessedTransaction(txSignature solana.Signa
 	return args.Error(0)
 }
 
-func (m *MockStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature, error) {
+func (m *MockStorageHandler) GetAllUnprocessedTransactions() ([]TxPoint, error) {
 	args := m.Called()
 
 	//nolint:forcetypeassert
-	return args.Get(0).([]solana.Signature), args.Error(1)
+	return args.Get(0).([]TxPoint), args.Error(1)
 }
 
-func (m *MockStorageHandler) SetLastProcessedTransaction(txSignature solana.Signature) error {
-	args := m.Called(txSignature)
+func (m *MockStorageHandler) SetLastProcessedTransaction(txPoint TxPoint) error {
+	args := m.Called(txPoint)
 
 	return args.Error(0)
 }
@@ -169,9 +169,22 @@ func (m *MockStorageHandler) FinalizeProcessedTransaction(txSignature solana.Sig
 	return args.Error(0)
 }
 
-func (m *MockStorageHandler) GetLastProcessedTransaction() (solana.Signature, error) {
+func (m *MockStorageHandler) GetLastProcessedTransaction() (TxPoint, error) {
 	args := m.Called()
 
 	//nolint:forcetypeassert
-	return args.Get(0).(solana.Signature), args.Error(1)
+	return args.Get(0).(TxPoint), args.Error(1)
+}
+
+func (m *MockStorageHandler) StoreLatestQueriedTransaction(txPoint TxPoint) error {
+	args := m.Called(txPoint)
+
+	return args.Error(0)
+}
+
+func (m *MockStorageHandler) GetLatestQueriedTransaction() (TxPoint, error) {
+	args := m.Called()
+
+	//nolint:forcetypeassert
+	return args.Get(0).(TxPoint), args.Error(1)
 }
