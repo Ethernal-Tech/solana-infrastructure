@@ -70,12 +70,6 @@ type StorageHandler interface {
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
 
-	// GetLatestEventSlot returns the highest slot any stored event was found in, or
-	// 0 if no events have been stored. Because the tracker processes transactions
-	// in ascending slot order, that slot is how far event processing has provably
-	// got, which makes it a usable fallback cursor when nothing else is recorded.
-	GetLatestEventSlot() (uint64, error)
-
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
@@ -124,15 +118,6 @@ type TxStorageHandler interface {
 	// FinalizeProcessedTransaction atomically removes txSignature from the front of the
 	// unprocessed queue and stores it as the last processed transaction.
 	FinalizeProcessedTransaction(txSignature solana.Signature) error
-	// SetLastQueriedTxSlot persists the slot of the newest finalized transaction
-	// signature the tracker has queried. It is a durable fallback cursor: unlike a
-	// signature, a slot number cannot become unresolvable, so it is used to resume
-	// querying when the stored signature cursor is rejected by the node. The
-	// tracker only ever advances it, so implementations may store it verbatim.
-	SetLastQueriedTxSlot(slot uint64) error
-	// GetLastQueriedTxSlot returns the slot persisted by SetLastQueriedTxSlot, or
-	// 0 if no slot has been persisted yet.
-	GetLastQueriedTxSlot() (uint64, error)
 	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
 	GetLatestFinalizedBlockNumber() (uint64, error)
 
@@ -182,7 +167,6 @@ var (
 	unprocessedTxQueueTailKey      = []byte("tail")
 	unprocessedTxSignaturesListKey = []byte("list") // legacy; migrated on access
 	lastProcessedTxSignatureKey    = []byte("last_processed")
-	lastQueriedTxSlotKey           = []byte("last_queried_slot")
 	latestFinalizedBlockNumberKey  = []byte("latest_finalized_block_number_key")
 )
 
@@ -644,42 +628,6 @@ func (b *BoltStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 	return results, nil
 }
 
-func (b *BoltStorageHandler) GetLatestEventSlot() (uint64, error) {
-	var latestSlot uint64
-
-	err := b.db.View(func(tx *bolt.Tx) error {
-		for _, bucketName := range [][]byte{unprocessedEventsBucket, processedEventsBucket} {
-			bucket := tx.Bucket(bucketName)
-			if bucket == nil {
-				continue
-			}
-
-			// Events are keyed by an ever increasing event ID and stored in
-			// processing order, so the last entry of a bucket holds its highest slot
-			_, v := bucket.Cursor().Last()
-			if v == nil {
-				continue
-			}
-
-			var record EventRecord
-			if err := json.Unmarshal(v, &record); err != nil {
-				return fmt.Errorf("failed to unmarshal event record: %w", err)
-			}
-
-			if record.Slot > latestSlot {
-				latestSlot = record.Slot
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	return latestSlot, nil
-}
-
 func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
 	var results []EventRecord
 
@@ -1004,38 +952,4 @@ func (b *BoltStorageHandler) GetLastProcessedTransaction() (solana.Signature, er
 	})
 
 	return sig, err
-}
-
-func (b *BoltStorageHandler) SetLastQueriedTxSlot(slot uint64) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		bucket, err := b.unprocessedTxSignaturesBucket(tx)
-		if err != nil {
-			return err
-		}
-
-		if err := bucket.Put(lastQueriedTxSlotKey, encodeUint64(slot)); err != nil {
-			return fmt.Errorf("cannot store last queried tx slot: %w", err)
-		}
-
-		return nil
-	})
-}
-
-func (b *BoltStorageHandler) GetLastQueriedTxSlot() (uint64, error) {
-	var slot uint64
-
-	err := b.db.View(func(tx *bolt.Tx) error {
-		bucket, err := b.unprocessedTxSignaturesBucket(tx)
-		if err != nil {
-			return err
-		}
-
-		if data := bucket.Get(lastQueriedTxSlotKey); len(data) > 0 {
-			slot = decodeUint64(data)
-		}
-
-		return nil
-	})
-
-	return slot, err
 }

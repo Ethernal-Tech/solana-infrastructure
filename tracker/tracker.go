@@ -26,8 +26,6 @@ const (
 	// refresh when near the chain head. Fewer results trigger a proportional wait.
 	chainHeadTargetBlockCount = 13
 	avgBlockTime              = 400 * time.Millisecond
-
-	emptySlotsWithBlocksOffset = chainHeadTargetBlockCount - 3
 )
 
 // EventNotification represents a notification sent on the chEvent channel.
@@ -74,11 +72,6 @@ type EventTrackerConfig struct {
 	DisableRateLimiting    bool
 }
 
-type LatestGetBlocksState struct {
-	chainHeadSlot             uint64
-	queriedBlocksWithSlotsLen int
-}
-
 type EventTracker struct {
 	client                 *common.MutexRPCClient
 	storage                store.StorageHandler
@@ -90,18 +83,8 @@ type EventTracker struct {
 	chainHeadSlot          uint64
 	chainHeadSlotOffset    uint64
 	lastQueriedTxSignature solana.Signature
-	// lastQueriedTxSlot is the slot of the newest finalized signature queried so
-	// far, mirrored from storage. It is the durable fallback cursor used when
-	// lastQueriedTxSignature can no longer be resolved by the node.
-	lastQueriedTxSlot uint64
-	// txCursorUnresolvable records that the node cannot resolve
-	// lastQueriedTxSignature, so signatures have to be queried from
-	// lastQueriedTxSlot instead. The signature itself is kept, because it is still
-	// the marker runTransactionPolling compares against the last processed one.
-	txCursorUnresolvable   bool
 	blockRoundingThreshold uint64
 	EventSubscriber        EventSubscriber
-	latestGetBlocksState   LatestGetBlocksState
 }
 
 func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (*EventTracker, error) {
@@ -165,10 +148,6 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		lastQueriedTxSignature: solana.Signature{},
 		blockRoundingThreshold: blockRoundingThreshold,
 		EventSubscriber:        config.EventSubscriber,
-		latestGetBlocksState: LatestGetBlocksState{
-			chainHeadSlot:             config.StartFromSlot,
-			queriedBlocksWithSlotsLen: 0,
-		},
 	}
 
 	return t, nil
@@ -177,7 +156,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 func (t *EventTracker) Start(ctx context.Context) {
 	t.logger.Info("Starting new event tracker")
 
-	if err := t.initialize(ctx); err != nil {
+	if err := t.initialize(); err != nil {
 		t.logger.Warn(fmt.Sprintf("Failed to initialize event tracker: %s", err.Error()))
 
 		return
@@ -281,7 +260,7 @@ func (t *EventTracker) getLastUnprocessedTxSignature() (solana.Signature, error)
 }
 
 // Initialization on startup
-func (t *EventTracker) initialize(ctx context.Context) error {
+func (t *EventTracker) initialize() error {
 	latestBlockPoint, err := t.storage.GetLatestBlockPoint()
 	if err != nil {
 		t.logger.Warn(fmt.Sprintf("Failed to get latest block point: %s", err.Error()))
@@ -320,112 +299,7 @@ func (t *EventTracker) initialize(ctx context.Context) error {
 		}
 	}
 
-	lastQueriedTxSlot, err := t.storage.GetLastQueriedTxSlot()
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to get last queried tx slot: %s", err.Error()))
-
-		return err
-	}
-
-	t.lastQueriedTxSlot = lastQueriedTxSlot
-
-	if err := t.bootstrapLastQueriedTxSlot(); err != nil {
-		return err
-	}
-
-	t.discardUnresolvableTxCursor(ctx)
-
 	return nil
-}
-
-// bootstrapLastQueriedTxSlot derives an initial slot watermark for storage that
-// has none, which is the case for anything that ran before the watermark was
-// introduced, and for a tracker whose signature cursor went unresolvable before
-// it ever completed a query.
-//
-// The newest stored event's slot is used. Transactions are processed in ascending
-// slot order, so every event that has already been stored comes from a slot at or
-// below it, and re-querying from above it cannot miss an event. Transactions in
-// between that emitted no tracked event may be fetched again, which stores
-// nothing and is therefore harmless.
-func (t *EventTracker) bootstrapLastQueriedTxSlot() error {
-	if t.lastQueriedTxSlot > 0 {
-		return nil
-	}
-
-	latestEventSlot, err := t.storage.GetLatestEventSlot()
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to get latest event slot: %s", err.Error()))
-
-		return err
-	}
-
-	if latestEventSlot == 0 {
-		return nil
-	}
-
-	if err := t.storage.SetLastQueriedTxSlot(latestEventSlot); err != nil {
-		return fmt.Errorf("failed to set last queried tx slot: %w", err)
-	}
-
-	t.lastQueriedTxSlot = latestEventSlot
-
-	t.logger.Info("No last queried tx slot stored, seeded it from the newest stored event",
-		"slot", latestEventSlot)
-
-	return nil
-}
-
-// discardUnresolvableTxCursor probes whether the signature cursor restored from
-// storage can still be resolved by the node, and drops it if it cannot. Checking
-// once on startup is cheaper than discovering it mid-poll, because
-// getSignaturesForAddress rejects an unresolvable until/before cursor outright
-// (see IsCursorNotFoundErr). Dropping the cursor makes the tracker resume from
-// the slot watermark instead.
-//
-// The cursor is kept whenever the outcome is inconclusive: a probe that fails
-// for any other reason (a transport error, an unhealthy node), or a watermark
-// that was never persisted - without a watermark there is nothing to fall back
-// to, and resuming from startFromSlot could re-ingest a large slot range.
-func (t *EventTracker) discardUnresolvableTxCursor(ctx context.Context) {
-	if t.lastQueriedTxSignature == (solana.Signature{}) || t.lastQueriedTxSlot == 0 {
-		return
-	}
-
-	statuses, err := t.client.GetSignatureStatuses(ctx, true, t.lastQueriedTxSignature)
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to check last queried tx signature status: %s", err.Error()))
-
-		return
-	}
-
-	// a signature the node cannot resolve comes back as a null status
-	if statuses == nil || len(statuses.Value) == 0 || statuses.Value[0] != nil {
-		return
-	}
-
-	t.logger.Warn("Last queried tx signature is not resolvable by the node, "+
-		"resuming from the last queried tx slot",
-		"signature", t.lastQueriedTxSignature.String(),
-		"slot", t.lastQueriedTxSlot)
-
-	t.txCursorUnresolvable = true
-}
-
-// txSlotFloor is the lowest slot the tracker still accepts signatures from when
-// it has no usable signature cursor. Signatures at or above it have not been
-// queried yet: the watermark slot itself was fully ingested (the whole page it
-// arrived in was), so the floor sits one slot above it.
-func (t *EventTracker) txSlotFloor() uint64 {
-	if t.lastQueriedTxSlot == 0 {
-		return t.startFromSlot
-	}
-
-	if floor := t.lastQueriedTxSlot + 1; floor > t.startFromSlot {
-		return floor
-	}
-
-	return t.startFromSlot
 }
 
 // Fetches tx and does processing
@@ -657,55 +531,10 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		return err
 	}
 
-	var txSignatures []*rpc.TransactionSignature
-
-	// No signature cursor to page from: either the first run, or the cursor was
-	// found to be unresolvable by the node. Page by slot instead.
-	useSlotFloor := lastQueriedTxSignature == (solana.Signature{}) || t.txCursorUnresolvable
-
-	if useSlotFloor {
-		txSignatures, err = t.getSignaturesFromSlotFloor(ctx, programID)
-		if err != nil {
-			return err
-		}
-	} else {
-		// Query until the last processed signature
-		txSignatures, err = t.getSignaturesForAddressHelper(ctx, programID, nil, &lastQueriedTxSignature)
-		if err != nil {
-			if !IsCursorNotFoundErr(err) {
-				return err
-			}
-
-			if t.lastQueriedTxSlot == 0 {
-				return fmt.Errorf(
-					"last queried tx signature %s cannot be resolved and no slot watermark is stored to resume from: %w",
-					lastQueriedTxSignature.String(), err)
-			}
-
-			t.logger.Warn("Last queried tx signature is no longer resolvable, falling back to the slot watermark",
-				"signature", lastQueriedTxSignature.String(),
-				"slotFloor", t.txSlotFloor(),
-				"err", err.Error())
-
-			// Stop paging from the dead cursor, so subsequent polls do not retry it
-			t.txCursorUnresolvable = true
-			useSlotFloor = true
-
-			txSignatures, err = t.getSignaturesFromSlotFloor(ctx, programID)
-			if err != nil {
-				return err
-			}
-		} else if len(txSignatures) == getSignaturesForAddressMaxLimit {
-			// We have to fetch what was before the last processed signature
-			// since the initial query returned the max limit of signatures
-			signatures, err := t.catchUpLoop(ctx, programID, lastQueriedTxSignature,
-				txSignatures[len(txSignatures)-1].Signature)
-			if err != nil {
-				return err
-			}
-
-			txSignatures = append(txSignatures, signatures...)
-		}
+	// Query until the last processed signature
+	txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID, nil, &lastQueriedTxSignature)
+	if err != nil {
+		return err
 	}
 
 	if len(txSignatures) == 0 {
@@ -723,38 +552,27 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		"count", len(txSignatures),
 		"last queried tx signature", lastQueriedTxSignature.String())
 
-	// Signatures queried by slot can overlap what is already queued, because the
-	// slot floor can sit below signatures that were already fetched: it is seeded
-	// from the newest stored event, which lags transactions that are queued but not
-	// processed yet, it only tracks finalized signatures when running at confirmed
-	// commitment, and it is persisted after the queue is written. Skip the overlap,
-	// the queue does not deduplicate on push.
-	var alreadyQueued map[solana.Signature]struct{}
-
-	if useSlotFloor {
-		alreadyQueued, err = t.getQueuedTxSignatures()
+	if len(txSignatures) == getSignaturesForAddressMaxLimit {
+		// We have to fetch what was before the last processed signature
+		// since the initial query returned the max limit of signatures
+		signatures, err := t.catchUpLoop(ctx, programID, lastQueriedTxSignature, txSignatures[len(txSignatures)-1].Signature)
 		if err != nil {
 			return err
 		}
+
+		txSignatures = append(txSignatures, signatures...)
 	}
 
 	// Since signatures are queried in reverse order, we need to store them in
 	// reverse order to get the correct order for processing
 	unprocessedTxSignatures := make([]solana.Signature, 0, len(txSignatures))
-	skippedAsQueued := false
 
 	for i := len(txSignatures) - 1; i >= 0; i-- {
-		// If there is no usable signature cursor, we need to check if the tx slot is
-		// greater than the slot floor, if it is not, we skip the tx
-		// important for the first run and after the signature cursor was dropped
-		if useSlotFloor {
-			if t.txSlotFloor() > txSignatures[i].Slot {
-				continue
-			}
-
-			if _, ok := alreadyQueued[txSignatures[i].Signature]; ok {
-				skippedAsQueued = true
-
+		// If the last queried tx signature is empty, we need to check if the tx slot is greater than the chain head slot
+		// if it is, we skip the tx
+		// important for the first run
+		if lastQueriedTxSignature == (solana.Signature{}) {
+			if t.startFromSlot > txSignatures[i].Slot {
 				continue
 			}
 		}
@@ -765,19 +583,14 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 	// If we skipped all the txs, we need to set the last queried tx signature to the newest one
 	// and set the last processed transaction to the latest one
 	if len(unprocessedTxSignatures) == 0 {
-		t.setLastQueriedTxSignature(txSignatures[0].Signature)
+		t.lastQueriedTxSignature = txSignatures[0].Signature
 
-		// Signatures skipped because they are already queued are not processed yet,
-		// so the last processed marker must stay where it is - it is what tells
-		// runTransactionPolling that the queue still has to be drained
-		if !skippedAsQueued {
-			err = t.storage.SetLastProcessedTransaction(txSignatures[0].Signature)
-			if err != nil {
-				return fmt.Errorf("failed to set last processed transaction on start: %w", err)
-			}
+		err = t.storage.SetLastProcessedTransaction(txSignatures[0].Signature)
+		if err != nil {
+			return fmt.Errorf("failed to set last processed transaction on start: %w", err)
 		}
 
-		return t.advanceLastQueriedTxSlot(txSignatures)
+		return nil
 	}
 
 	err = t.storage.PushUnprocessedTransactions(unprocessedTxSignatures)
@@ -785,128 +598,12 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		return fmt.Errorf("failed to push unprocessed transactions: %w", err)
 	}
 
-	t.setLastQueriedTxSignature(txSignatures[0].Signature)
+	t.lastQueriedTxSignature = txSignatures[0].Signature
 
 	t.logger.Debug("Fetched new transactions", "count",
 		len(txSignatures), "last queried tx signature", txSignatures[0].Signature.String())
 
-	return t.advanceLastQueriedTxSlot(txSignatures)
-}
-
-// setLastQueriedTxSignature moves the signature cursor to a signature that was
-// just returned by the node, which makes it resolvable again, so paging from it
-// can resume.
-func (t *EventTracker) setLastQueriedTxSignature(txSignature solana.Signature) {
-	t.lastQueriedTxSignature = txSignature
-	t.txCursorUnresolvable = false
-}
-
-// advanceLastQueriedTxSlot moves the persisted slot watermark up to the slot of
-// the newest finalized signature in txSignatures, which must be ordered newest
-// first, as getSignaturesForAddress returns it.
-//
-// Only finalized signatures count. A confirmed-but-not-finalized transaction can
-// still be dropped on a fork, and a watermark pointing past dropped transactions
-// would make the fallback path skip them. Lagging behind the newest signature is
-// safe in the other direction: the fallback may re-query a few signatures that
-// were already ingested.
-func (t *EventTracker) advanceLastQueriedTxSlot(txSignatures []*rpc.TransactionSignature) error {
-	for _, txSignature := range txSignatures {
-		// When querying at finalized commitment every returned signature is
-		// finalized, whether or not the node populates confirmationStatus
-		if t.commitment != rpc.CommitmentFinalized &&
-			txSignature.ConfirmationStatus != rpc.ConfirmationStatusFinalized {
-			continue
-		}
-
-		if txSignature.Slot <= t.lastQueriedTxSlot {
-			return nil
-		}
-
-		if err := t.storage.SetLastQueriedTxSlot(txSignature.Slot); err != nil {
-			return fmt.Errorf("failed to set last queried tx slot: %w", err)
-		}
-
-		t.lastQueriedTxSlot = txSignature.Slot
-
-		return nil
-	}
-
 	return nil
-}
-
-// getQueuedTxSignatures returns the signatures currently waiting in the
-// unprocessed queue, plus the last processed one, as a lookup set. Signatures
-// that were processed and dropped from the queue earlier are not tracked, so a
-// re-query reaching further back than the queue can still produce duplicates.
-func (t *EventTracker) getQueuedTxSignatures() (map[solana.Signature]struct{}, error) {
-	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get all unprocessed transactions: %w", err)
-	}
-
-	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get last processed transaction: %w", err)
-	}
-
-	queued := make(map[solana.Signature]struct{}, len(unprocessedTxSignatures)+1)
-
-	for _, txSignature := range unprocessedTxSignatures {
-		queued[txSignature] = struct{}{}
-	}
-
-	if lastProcessedTxSignature != (solana.Signature{}) {
-		queued[lastProcessedTxSignature] = struct{}{}
-	}
-
-	return queued, nil
-}
-
-// getSignaturesFromSlotFloor fetches every signature for programID down to
-// txSlotFloor, for when there is no usable signature cursor to page from. Paging
-// stops as soon as a page reaches below the floor, so history older than the
-// floor is never walked.
-func (t *EventTracker) getSignaturesFromSlotFloor(
-	ctx context.Context, programID solana.PublicKey,
-) ([]*rpc.TransactionSignature, error) {
-	slotFloor := t.txSlotFloor()
-
-	t.logger.Debug("Fetching new transactions by slot", "slot floor", slotFloor)
-
-	var (
-		result []*rpc.TransactionSignature
-		before *solana.Signature
-	)
-
-	for {
-		txSignatures, err := t.getSignaturesForAddressHelper(ctx, programID, before, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(txSignatures) == 0 {
-			return result, nil
-		}
-
-		reachedFloor := false
-
-		for _, txSignature := range txSignatures {
-			if txSignature.Slot < slotFloor {
-				reachedFloor = true
-
-				break
-			}
-
-			result = append(result, txSignature)
-		}
-
-		if reachedFloor || len(txSignatures) < getSignaturesForAddressMaxLimit {
-			return result, nil
-		}
-
-		before = &txSignatures[len(txSignatures)-1].Signature
-	}
 }
 
 func (t *EventTracker) catchUpLoop(
@@ -1072,17 +769,6 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 	t.logger.Debug(fmt.Sprintf("Blocks with limit %d at slot %d: %d",
 		t.chainHeadSlotOffset, endSlot, len(slotsWithBlocks)), "slotsWithBlocks", slotsWithBlocks)
 
-	state := LatestGetBlocksState{
-		chainHeadSlot:             startSlot,
-		queriedBlocksWithSlotsLen: len(slotsWithBlocks),
-	}
-
-	if state == t.latestGetBlocksState {
-		return t.unstickChainHead(slotsWithBlocks)
-	}
-
-	t.latestGetBlocksState = state
-
 	if len(slotsWithBlocks) == 0 {
 		return chainHeadCatchUpWait(0), nil
 	}
@@ -1150,31 +836,4 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 	}
 
 	return chainHeadCatchUpWait(len(slotsWithBlocks)), nil
-}
-
-// unstickChainHead force-advances the chain head when two consecutive GetBlocks
-// calls returned the identical window. That happens when the trailing group of
-// slots-with-blocks is never closed by a following block (e.g. an outage skipped
-// the rest of the window), so getSlotsToQueryBlocks only ever returns the current
-// chain head and refreshChainHead makes no progress.
-func (t *EventTracker) unstickChainHead(
-	slotsWithBlocks []uint64,
-) (idleWait time.Duration, err error) {
-	// In case of the outage we advance with this
-	newChainHeadSlot := t.chainHeadSlot + emptySlotsWithBlocksOffset
-
-	if len(slotsWithBlocks) > 1 {
-		// resume from the last slot we know has a block
-		newChainHeadSlot = slotsWithBlocks[len(slotsWithBlocks)-1]
-	}
-
-	t.logger.Warn("Chain head stuck, force advancing",
-		"from", t.chainHeadSlot,
-		"to", newChainHeadSlot,
-		"slotsWithBlocks", slotsWithBlocks)
-
-	t.chainHeadSlot = newChainHeadSlot
-	t.latestGetBlocksState = LatestGetBlocksState{chainHeadSlot: newChainHeadSlot}
-
-	return 0, nil
 }

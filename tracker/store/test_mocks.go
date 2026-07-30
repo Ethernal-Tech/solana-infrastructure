@@ -110,13 +110,6 @@ func (m *MockStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 	return args.Get(0).([]EventRecord), args.Error(1)
 }
 
-func (m *MockStorageHandler) GetLatestEventSlot() (uint64, error) {
-	args := m.Called()
-
-	//nolint:forcetypeassert
-	return args.Get(0).(uint64), args.Error(1)
-}
-
 func (m *MockStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
 	args := m.Called(blockNumber)
 
@@ -181,17 +174,4 @@ func (m *MockStorageHandler) GetLastProcessedTransaction() (solana.Signature, er
 
 	//nolint:forcetypeassert
 	return args.Get(0).(solana.Signature), args.Error(1)
-}
-
-func (m *MockStorageHandler) SetLastQueriedTxSlot(slot uint64) error {
-	args := m.Called(slot)
-
-	return args.Error(0)
-}
-
-func (m *MockStorageHandler) GetLastQueriedTxSlot() (uint64, error) {
-	args := m.Called()
-
-	//nolint:forcetypeassert
-	return args.Get(0).(uint64), args.Error(1)
 }
