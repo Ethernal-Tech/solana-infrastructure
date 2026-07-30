@@ -5,12 +5,20 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/hashicorp/go-hclog"
 )
 
 const (
 	defaultRetryCount    = 10
 	defaultRetryWaitTime = time.Second * 5
+
+	// rpcErrCodeTxNotFound is returned by Solana as
+	// `Transaction <signature> not found` when a signature passed as a
+	// before/until cursor to getSignaturesForAddress cannot be resolved by the
+	// node. It means the cursor is permanently unusable against that node, not
+	// that the call should be retried.
+	rpcErrCodeTxNotFound = -32020
 )
 
 var (
@@ -32,6 +40,19 @@ type RetryConfigOption func(c *RetryConfig)
 
 func IsRetryableError(err error) bool {
 	return errors.Is(err, ErrRetryTryAgain)
+}
+
+// IsCursorNotFoundErr reports whether err is the Solana `Transaction <signature>
+// not found` error returned when a signature used as a before/until cursor
+// cannot be resolved by the node. That happens when the signature aged out of
+// the node's transaction history, the ledger was reset (or a different endpoint
+// is being used), or the transaction was dropped on a fork before it finalized.
+// Such an error is permanent for that cursor, so retrying the same call is
+// pointless - the cursor has to be replaced.
+func IsCursorNotFoundErr(err error) bool {
+	var rpcErr *jsonrpc.RPCError
+
+	return errors.As(err, &rpcErr) && rpcErr.Code == rpcErrCodeTxNotFound
 }
 
 func WithRetryCount(retryCount int) RetryConfigOption {
