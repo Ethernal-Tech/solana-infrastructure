@@ -559,7 +559,7 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 	}
 
 	// Filter out potential duplicates
-	queuedTxSignatures, err := t.getQueuedTxSignatures()
+	queuedTxSignatures, err := t.getQueuedTxSignatures(lastQueried.Slot)
 	if err != nil {
 		return fmt.Errorf("failed to get queued tx signatures: %w", err)
 	}
@@ -1017,13 +1017,13 @@ func (t *EventTracker) unstickChainHead(
 // unprocessed queue, plus the last processed one, as a lookup set. Signatures
 // that were processed and dropped from the queue earlier are not tracked, so a
 // re-query reaching further back than the queue can still produce duplicates.
-func (t *EventTracker) getQueuedTxSignatures() (map[solana.Signature]struct{}, error) {
+func (t *EventTracker) getQueuedTxSignatures(slot uint64) (map[solana.Signature]struct{}, error) {
 	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all unprocessed transactions: %w", err)
 	}
 
-	processedTxSignatures, err := t.storage.GetProcessedTxSignaturesBySlot(t.chainHeadSlot)
+	processedTxSignatures, err := t.storage.GetProcessedTxSignaturesBySlot(slot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get processed transaction signatures: %w", err)
 	}
