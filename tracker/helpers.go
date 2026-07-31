@@ -5,12 +5,15 @@ import (
 	"errors"
 	"time"
 
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/hashicorp/go-hclog"
 )
 
 const (
 	defaultRetryCount    = 10
 	defaultRetryWaitTime = time.Second * 5
+
+	rpcErrCodeTxNotFound = -32020
 )
 
 var (
@@ -32,6 +35,13 @@ type RetryConfigOption func(c *RetryConfig)
 
 func IsRetryableError(err error) bool {
 	return errors.Is(err, ErrRetryTryAgain)
+}
+
+func IsCursorNotFoundErr(err error) bool {
+	var rpcErr *jsonrpc.RPCError
+
+	return errors.As(err, &rpcErr) &&
+		rpcErr.Code == rpcErrCodeTxNotFound
 }
 
 func WithRetryCount(retryCount int) RetryConfigOption {

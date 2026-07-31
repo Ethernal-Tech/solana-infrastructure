@@ -70,6 +70,12 @@ type StorageHandler interface {
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
 
+	// GetProcessedTxSignaturesBySlot returns the distinct signatures of the transactions that
+	// produced stored events in the given slot, in the order the events were stored. It is
+	// derived from the event records, so it only reports transactions that emitted a tracked
+	// event; a processed transaction that emitted none is not included.
+	GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error)
+
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
@@ -110,11 +116,15 @@ type StorageHandler interface {
 }
 
 type TxStorageHandler interface {
-	PushUnprocessedTransactions(txSignatures []solana.Signature) error
+	PushUnprocessedTransactions(txPoints []TxPoint) error
 	RemoveProcessedTransaction(txSignature solana.Signature) error
-	GetAllUnprocessedTransactions() ([]solana.Signature, error)
-	SetLastProcessedTransaction(txSignature solana.Signature) error
-	GetLastProcessedTransaction() (solana.Signature, error)
+	GetAllUnprocessedTransactions() ([]TxPoint, error)
+	SetLastProcessedTransaction(txPoint TxPoint) error
+	GetLastProcessedTransaction() (TxPoint, error)
+	// StoreLatestQueriedTransaction records the newest transaction returned by
+	// getSignaturesForAddress, that is, the point new queries resume from.
+	StoreLatestQueriedTransaction(txPoint TxPoint) error
+	GetLatestQueriedTransaction() (TxPoint, error)
 	// FinalizeProcessedTransaction atomically removes txSignature from the front of the
 	// unprocessed queue and stores it as the last processed transaction.
 	FinalizeProcessedTransaction(txSignature solana.Signature) error
@@ -149,6 +159,13 @@ type BlockPoint struct {
 	BlockNumber uint64      `json:"number"`
 }
 
+// TxPoint pairs a transaction signature with the slot the transaction landed in.
+// A zero TxSignature means "none": no transaction has been queried or processed yet.
+type TxPoint struct {
+	TxSignature solana.Signature `json:"tx_signature"`
+	Slot        uint64           `json:"slot"`
+}
+
 var (
 	slotBucket                       = []byte("slot")
 	blocksBucket                     = []byte("blocks")
@@ -167,6 +184,7 @@ var (
 	unprocessedTxQueueTailKey      = []byte("tail")
 	unprocessedTxSignaturesListKey = []byte("list") // legacy; migrated on access
 	lastProcessedTxSignatureKey    = []byte("last_processed")
+	lastQueriedTxSignatureKey      = []byte("last_queried")
 	latestFinalizedBlockNumberKey  = []byte("latest_finalized_block_number_key")
 )
 
@@ -628,6 +646,37 @@ func (b *BoltStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 	return results, nil
 }
 
+// GetProcessedTxSignaturesBySlot projects the distinct transaction signatures out of the
+// events stored for the given slot. Events are only written after their transaction has been
+// processed, so a signature appearing here means that transaction was processed; the converse
+// does not hold, since a processed transaction that emitted no tracked event stores no record.
+func (b *BoltStorageHandler) GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error) {
+	records, err := b.GetEventsBySlot(slot)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[solana.Signature]struct{}, len(records))
+	signatures := make([]solana.Signature, 0, len(records))
+
+	for _, record := range records {
+		txSignature, err := solana.SignatureFromBase58(record.TxSignature)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tx signature %q in event %d: %w", record.TxSignature, record.ID, err)
+		}
+
+		if _, ok := seen[txSignature]; ok {
+			continue
+		}
+
+		seen[txSignature] = struct{}{}
+
+		signatures = append(signatures, txSignature)
+	}
+
+	return signatures, nil
+}
+
 func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
 	var results []EventRecord
 
@@ -661,7 +710,7 @@ func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]Event
 	return results, nil
 }
 
-// txQueueBounds tracks a FIFO queue stored as encodeUint64(index) -> signature bytes.
+// txQueueBounds tracks a FIFO queue stored as encodeUint64(index) -> encodeTxPoint(entry).
 // head is the index of the front element; tail is one past the last element.
 type txQueueBounds struct {
 	head uint64
@@ -723,7 +772,8 @@ func (b *BoltStorageHandler) migrateLegacyTxQueueList(bucket *bolt.Bucket) error
 			return fmt.Errorf("invalid legacy tx signature at index %d: %w", i, err)
 		}
 
-		if err := bucket.Put(encodeUint64(tail), sig[:]); err != nil {
+		// the legacy list carried no slot, so migrated entries keep slot 0
+		if err := bucket.Put(encodeUint64(tail), encodeTxPoint(TxPoint{TxSignature: sig})); err != nil {
 			return fmt.Errorf("cannot migrate legacy tx signature at index %d: %w", i, err)
 		}
 
@@ -745,24 +795,40 @@ func (b *BoltStorageHandler) migrateLegacyTxQueueList(bucket *bolt.Bucket) error
 	return bucket.Put(unprocessedTxQueueHeadKey, encodeUint64(0))
 }
 
-func signatureFromBucketValue(data []byte) (solana.Signature, error) {
-	if len(data) != len(solana.Signature{}) {
-		return solana.Signature{}, fmt.Errorf("invalid signature length %d", len(data))
-	}
+// encodeTxPoint serializes a TxPoint as signature bytes followed by the big-endian slot.
+func encodeTxPoint(txPoint TxPoint) []byte {
+	data := make([]byte, 0, len(txPoint.TxSignature)+8)
+	data = append(data, txPoint.TxSignature[:]...)
 
-	var sig solana.Signature
-
-	copy(sig[:], data)
-
-	return sig, nil
+	return append(data, encodeUint64(txPoint.Slot)...)
 }
 
-func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.Signature) error {
-	nonEmpty := make([]solana.Signature, 0, len(txSignatures))
+// txPointFromBucketValue decodes a value written by encodeTxPoint. Values written
+// before slots were persisted hold only the signature and decode with slot 0.
+func txPointFromBucketValue(data []byte) (TxPoint, error) {
+	sigLen := len(solana.Signature{})
 
-	for _, sig := range txSignatures {
-		if sig != (solana.Signature{}) {
-			nonEmpty = append(nonEmpty, sig)
+	if len(data) != sigLen && len(data) != sigLen+8 {
+		return TxPoint{}, fmt.Errorf("invalid tx point length %d", len(data))
+	}
+
+	var txPoint TxPoint
+
+	copy(txPoint.TxSignature[:], data[:sigLen])
+
+	if len(data) > sigLen {
+		txPoint.Slot = decodeUint64(data[sigLen:])
+	}
+
+	return txPoint, nil
+}
+
+func (b *BoltStorageHandler) PushUnprocessedTransactions(txPoints []TxPoint) error {
+	nonEmpty := make([]TxPoint, 0, len(txPoints))
+
+	for _, txPoint := range txPoints {
+		if txPoint.TxSignature != (solana.Signature{}) {
+			nonEmpty = append(nonEmpty, txPoint)
 		}
 	}
 
@@ -785,8 +851,8 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.S
 			return err
 		}
 
-		for _, sig := range nonEmpty {
-			if err := bucket.Put(encodeUint64(bounds.tail), sig[:]); err != nil {
+		for _, txPoint := range nonEmpty {
+			if err := bucket.Put(encodeUint64(bounds.tail), encodeTxPoint(txPoint)); err != nil {
 				return fmt.Errorf("cannot store unprocessed tx signature: %w", err)
 			}
 
@@ -797,39 +863,41 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txSignatures []solana.S
 	})
 }
 
-func removeProcessedTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) error {
+// removeProcessedTransactionInBucket pops txSignature off the front of the queue and
+// returns the removed entry, including the slot recorded when it was pushed.
+func removeProcessedTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) (TxPoint, error) {
 	bounds, err := loadTxQueueBounds(bucket)
 	if err != nil {
-		return err
+		return TxPoint{}, err
 	}
 
 	if bounds.head >= bounds.tail {
-		return fmt.Errorf("no unprocessed transactions to remove")
+		return TxPoint{}, fmt.Errorf("no unprocessed transactions to remove")
 	}
 
 	headKey := encodeUint64(bounds.head)
 
-	front, err := signatureFromBucketValue(bucket.Get(headKey))
+	front, err := txPointFromBucketValue(bucket.Get(headKey))
 	if err != nil {
-		return fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", bounds.head, err)
+		return TxPoint{}, fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", bounds.head, err)
 	}
 
-	if front != txSignature {
-		return fmt.Errorf(
+	if front.TxSignature != txSignature {
+		return TxPoint{}, fmt.Errorf(
 			"transaction %s is not at the front of the unprocessed queue (front is %s)",
-			txSignature, front,
+			txSignature, front.TxSignature,
 		)
 	}
 
 	if err := bucket.Delete(headKey); err != nil {
-		return fmt.Errorf("cannot remove unprocessed tx signature: %w", err)
+		return TxPoint{}, fmt.Errorf("cannot remove unprocessed tx signature: %w", err)
 	}
 
-	return storeTxQueueHead(bucket, bounds.head+1)
+	return front, storeTxQueueHead(bucket, bounds.head+1)
 }
 
-func setLastProcessedTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) error {
-	return bucket.Put(lastProcessedTxSignatureKey, txSignature[:])
+func setLastProcessedTransactionInBucket(bucket *bolt.Bucket, txPoint TxPoint) error {
+	return bucket.Put(lastProcessedTxSignatureKey, encodeTxPoint(txPoint))
 }
 
 func (b *BoltStorageHandler) RemoveProcessedTransaction(txSignature solana.Signature) error {
@@ -843,7 +911,9 @@ func (b *BoltStorageHandler) RemoveProcessedTransaction(txSignature solana.Signa
 			return err
 		}
 
-		return removeProcessedTransactionInBucket(bucket, txSignature)
+		_, err = removeProcessedTransactionInBucket(bucket, txSignature)
+
+		return err
 	})
 }
 
@@ -858,12 +928,12 @@ func (b *BoltStorageHandler) ensureTxQueueMigrated() error {
 	})
 }
 
-func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature, error) {
+func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]TxPoint, error) {
 	if err := b.ensureTxQueueMigrated(); err != nil {
 		return nil, err
 	}
 
-	var result []solana.Signature
+	var result []TxPoint
 
 	err := b.db.View(func(tx *bolt.Tx) error {
 		bucket, err := b.unprocessedTxSignaturesBucket(tx)
@@ -885,15 +955,15 @@ func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature
 			return nil
 		}
 
-		result = make([]solana.Signature, 0, count)
+		result = make([]TxPoint, 0, count)
 
 		for i := bounds.head; i < bounds.tail; i++ {
-			sig, err := signatureFromBucketValue(bucket.Get(encodeUint64(i)))
+			txPoint, err := txPointFromBucketValue(bucket.Get(encodeUint64(i)))
 			if err != nil {
 				return fmt.Errorf("corrupt unprocessed tx queue at index %d: %w", i, err)
 			}
 
-			result = append(result, sig)
+			result = append(result, txPoint)
 		}
 
 		return nil
@@ -902,14 +972,14 @@ func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]solana.Signature
 	return result, err
 }
 
-func (b *BoltStorageHandler) SetLastProcessedTransaction(txSignature solana.Signature) error {
+func (b *BoltStorageHandler) SetLastProcessedTransaction(txPoint TxPoint) error {
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := b.unprocessedTxSignaturesBucket(tx)
 		if err != nil {
 			return err
 		}
 
-		return setLastProcessedTransactionInBucket(bucket, txSignature)
+		return setLastProcessedTransactionInBucket(bucket, txPoint)
 	})
 }
 
@@ -924,16 +994,38 @@ func (b *BoltStorageHandler) FinalizeProcessedTransaction(txSignature solana.Sig
 			return err
 		}
 
-		if err := removeProcessedTransactionInBucket(bucket, txSignature); err != nil {
+		txPoint, err := removeProcessedTransactionInBucket(bucket, txSignature)
+		if err != nil {
 			return err
 		}
 
-		return setLastProcessedTransactionInBucket(bucket, txSignature)
+		return setLastProcessedTransactionInBucket(bucket, txPoint)
 	})
 }
 
-func (b *BoltStorageHandler) GetLastProcessedTransaction() (solana.Signature, error) {
-	var sig solana.Signature
+func (b *BoltStorageHandler) GetLastProcessedTransaction() (TxPoint, error) {
+	return b.getTxPointByKey(lastProcessedTxSignatureKey)
+}
+
+func (b *BoltStorageHandler) StoreLatestQueriedTransaction(txPoint TxPoint) error {
+	return b.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := b.unprocessedTxSignaturesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		return bucket.Put(lastQueriedTxSignatureKey, encodeTxPoint(txPoint))
+	})
+}
+
+func (b *BoltStorageHandler) GetLatestQueriedTransaction() (TxPoint, error) {
+	return b.getTxPointByKey(lastQueriedTxSignatureKey)
+}
+
+// getTxPointByKey reads a single TxPoint from the tx signatures bucket. A missing
+// key yields the zero TxPoint, which callers read as "none recorded yet".
+func (b *BoltStorageHandler) getTxPointByKey(key []byte) (TxPoint, error) {
+	var txPoint TxPoint
 
 	err := b.db.View(func(tx *bolt.Tx) error {
 		bucket, err := b.unprocessedTxSignaturesBucket(tx)
@@ -941,15 +1033,15 @@ func (b *BoltStorageHandler) GetLastProcessedTransaction() (solana.Signature, er
 			return err
 		}
 
-		data := bucket.Get(lastProcessedTxSignatureKey)
+		data := bucket.Get(key)
 		if data == nil {
 			return nil
 		}
 
-		sig, err = signatureFromBucketValue(data)
+		txPoint, err = txPointFromBucketValue(data)
 
 		return err
 	})
 
-	return sig, err
+	return txPoint, err
 }
