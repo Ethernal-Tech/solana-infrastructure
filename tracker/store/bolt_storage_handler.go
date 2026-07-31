@@ -70,6 +70,12 @@ type StorageHandler interface {
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
 
+	// GetProcessedTxSignaturesBySlot returns the distinct signatures of the transactions that
+	// produced stored events in the given slot, in the order the events were stored. It is
+	// derived from the event records, so it only reports transactions that emitted a tracked
+	// event; a processed transaction that emitted none is not included.
+	GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error)
+
 	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
 	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
 	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
@@ -638,6 +644,37 @@ func (b *BoltStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 	}
 
 	return results, nil
+}
+
+// GetProcessedTxSignaturesBySlot projects the distinct transaction signatures out of the
+// events stored for the given slot. Events are only written after their transaction has been
+// processed, so a signature appearing here means that transaction was processed; the converse
+// does not hold, since a processed transaction that emitted no tracked event stores no record.
+func (b *BoltStorageHandler) GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error) {
+	records, err := b.GetEventsBySlot(slot)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[solana.Signature]struct{}, len(records))
+	signatures := make([]solana.Signature, 0, len(records))
+
+	for _, record := range records {
+		txSignature, err := solana.SignatureFromBase58(record.TxSignature)
+		if err != nil {
+			return nil, fmt.Errorf("invalid tx signature %q in event %d: %w", record.TxSignature, record.ID, err)
+		}
+
+		if _, ok := seen[txSignature]; ok {
+			continue
+		}
+
+		seen[txSignature] = struct{}{}
+
+		signatures = append(signatures, txSignature)
+	}
+
+	return signatures, nil
 }
 
 func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {

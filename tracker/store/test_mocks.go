@@ -110,6 +110,13 @@ func (m *MockStorageHandler) GetEventsBySlot(slot uint64) ([]EventRecord, error)
 	return args.Get(0).([]EventRecord), args.Error(1)
 }
 
+func (m *MockStorageHandler) GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error) {
+	args := m.Called(slot)
+
+	//nolint:forcetypeassert
+	return args.Get(0).([]solana.Signature), args.Error(1)
+}
+
 func (m *MockStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
 	args := m.Called(blockNumber)
 

@@ -58,6 +58,59 @@ func TestBoltStorageHandler_GetEventsBySlot(t *testing.T) {
 	require.Empty(t, events)
 }
 
+func TestBoltStorageHandler_GetProcessedTxSignaturesBySlot(t *testing.T) {
+	t.Parallel()
+
+	dbPath, err := os.CreateTemp("", "solana-store-processed-sigs-test-*")
+	require.NoError(t, err)
+
+	require.NoError(t, dbPath.Close())
+	require.NoError(t, os.Remove(dbPath.Name()))
+
+	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, handler.Close())
+		require.NoError(t, os.Remove(dbPath.Name()))
+	})
+
+	programID := solana.NewWallet().PublicKey()
+	sig1, err := solana.NewWallet().PrivateKey.Sign([]byte("tx1"))
+	require.NoError(t, err)
+	sig2, err := solana.NewWallet().PrivateKey.Sign([]byte("tx2"))
+	require.NoError(t, err)
+	sig3, err := solana.NewWallet().PrivateKey.Sign([]byte("tx3"))
+	require.NoError(t, err)
+
+	type testEvent struct {
+		Value int `json:"value"`
+	}
+
+	// sig1 emits two events in the same slot, so it must be reported once
+	require.NoError(t, handler.StoreEvent(
+		nil, 10, 100, sig1, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 1}))
+	require.NoError(t, handler.StoreEvent(
+		nil, 10, 100, sig1, programID, "TransactionExecutedEvent", [32]byte{}, &testEvent{Value: 2}))
+	require.NoError(t, handler.StoreEvent(
+		nil, 10, 100, sig2, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 3}))
+	require.NoError(t, handler.StoreEvent(
+		nil, 11, 101, sig3, programID, "BridgeRequestEvent", [32]byte{}, &testEvent{Value: 4}))
+
+	// distinct, in the order the events were stored
+	signatures, err := handler.GetProcessedTxSignaturesBySlot(10)
+	require.NoError(t, err)
+	require.Equal(t, []solana.Signature{sig1, sig2}, signatures)
+
+	signatures, err = handler.GetProcessedTxSignaturesBySlot(11)
+	require.NoError(t, err)
+	require.Equal(t, []solana.Signature{sig3}, signatures)
+
+	signatures, err = handler.GetProcessedTxSignaturesBySlot(99)
+	require.NoError(t, err)
+	require.Empty(t, signatures)
+}
+
 func TestBoltStorageHandler_UnprocessedTransactions(t *testing.T) {
 	t.Parallel()
 

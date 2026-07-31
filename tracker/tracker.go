@@ -598,6 +598,10 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		// important for the first run
 		if lastQueried.TxSignature == (solana.Signature{}) {
 			if t.startFromSlot > txSignatures[i].Slot {
+				t.logger.Debug("Skipping transaction signature",
+					"tx signature", txSignatures[i].Signature.String(),
+					"slot", txSignatures[i].Slot, "start from slot", t.startFromSlot)
+
 				continue
 			}
 		}
@@ -1015,19 +1019,19 @@ func (t *EventTracker) getQueuedTxSignatures() (map[solana.Signature]struct{}, e
 		return nil, fmt.Errorf("failed to get all unprocessed transactions: %w", err)
 	}
 
-	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+	processedTxSignatures, err := t.storage.GetProcessedTxSignaturesBySlot(t.chainHeadSlot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get last processed transaction: %w", err)
+		return nil, fmt.Errorf("failed to get processed transaction signatures: %w", err)
 	}
 
-	queued := make(map[solana.Signature]struct{}, len(unprocessedTxSignatures)+1)
+	queued := make(map[solana.Signature]struct{}, len(unprocessedTxSignatures)+len(processedTxSignatures))
 
 	for _, txSignature := range unprocessedTxSignatures {
 		queued[txSignature.TxSignature] = struct{}{}
 	}
 
-	if lastProcessedTxSignature.TxSignature != (solana.Signature{}) {
-		queued[lastProcessedTxSignature.TxSignature] = struct{}{}
+	for _, txSignature := range processedTxSignatures {
+		queued[txSignature] = struct{}{}
 	}
 
 	return queued, nil
