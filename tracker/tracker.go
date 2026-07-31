@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -557,6 +558,22 @@ func (t *EventTracker) fetchNextGetSignaturesForAddress(
 		return err
 	}
 
+	// Filter out potential duplicates
+	queuedTxSignatures, err := t.getQueuedTxSignatures()
+	if err != nil {
+		return fmt.Errorf("failed to get queued tx signatures: %w", err)
+	}
+
+	txSignatures = slices.DeleteFunc(txSignatures, func(txSig *rpc.TransactionSignature) bool {
+		if _, exists := queuedTxSignatures[txSig.Signature]; !exists {
+			return false
+		}
+
+		t.logger.Debug("Skipping duplicate transaction signature", "tx signature", txSig.Signature.String())
+
+		return true
+	})
+
 	if len(txSignatures) == 0 {
 		t.logger.Debug("No new transactions found, setting new finalized block number", "number", latestFinalizedBlockNumber)
 
@@ -654,7 +671,8 @@ func (t *EventTracker) signaturesForAddressFetcher(
 		signaturesToKeep := make([]*rpc.TransactionSignature, 0, len(txSignatures))
 
 		for _, txSig := range txSignatures {
-			if txSig.Slot > lastQueried.Slot {
+			// We check for >= since there could be more than 1 tx in the same slot, and we want to keep all of them
+			if txSig.Slot >= lastQueried.Slot {
 				signaturesToKeep = append(signaturesToKeep, txSig)
 			}
 		}
@@ -734,7 +752,8 @@ func (t *EventTracker) catchUpLoop(
 
 		if cursorNotFound {
 			for _, txSig := range txSignatures {
-				if txSig.Slot > lastQueried.Slot {
+				// We check for >= since there could be more than 1 tx in the same slot, and we want to keep all of them
+				if txSig.Slot >= lastQueried.Slot {
 					signatures = append(signatures, txSig)
 				}
 			}
@@ -984,4 +1003,32 @@ func (t *EventTracker) unstickChainHead(
 	t.latestGetBlocksState = LatestGetBlocksState{chainHeadSlot: newChainHeadSlot}
 
 	return 0, nil
+}
+
+// getQueuedTxSignatures returns the signatures currently waiting in the
+// unprocessed queue, plus the last processed one, as a lookup set. Signatures
+// that were processed and dropped from the queue earlier are not tracked, so a
+// re-query reaching further back than the queue can still produce duplicates.
+func (t *EventTracker) getQueuedTxSignatures() (map[solana.Signature]struct{}, error) {
+	unprocessedTxSignatures, err := t.storage.GetAllUnprocessedTransactions()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all unprocessed transactions: %w", err)
+	}
+
+	lastProcessedTxSignature, err := t.storage.GetLastProcessedTransaction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get last processed transaction: %w", err)
+	}
+
+	queued := make(map[solana.Signature]struct{}, len(unprocessedTxSignatures)+1)
+
+	for _, txSignature := range unprocessedTxSignatures {
+		queued[txSignature.TxSignature] = struct{}{}
+	}
+
+	if lastProcessedTxSignature.TxSignature != (solana.Signature{}) {
+		queued[lastProcessedTxSignature.TxSignature] = struct{}{}
+	}
+
+	return queued, nil
 }
