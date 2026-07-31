@@ -754,18 +754,22 @@ func (t *EventTracker) catchUpLoop(
 			return nil, err
 		}
 
+		appendedSignatures := 0
+
 		if cursorNotFound {
 			for _, txSig := range txSignatures {
 				// We check for >= since there could be more than 1 tx in the same slot, and we want to keep all of them
 				if txSig.Slot >= lastQueried.Slot {
 					signatures = append(signatures, txSig)
+					appendedSignatures++
 				}
 			}
 		} else {
 			signatures = append(signatures, txSignatures...)
+			appendedSignatures = len(txSignatures)
 		}
 
-		if len(txSignatures) < getSignaturesForAddressMaxLimit {
+		if appendedSignatures < getSignaturesForAddressMaxLimit {
 			break
 		}
 
