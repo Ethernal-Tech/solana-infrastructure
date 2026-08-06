@@ -912,7 +912,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 	}
 
 	if state == t.latestGetBlocksState {
-		return t.unstickChainHead(slotsWithBlocks)
+		return t.unstickChainHead(ctx, slotsWithBlocks)
 	}
 
 	t.latestGetBlocksState = state
@@ -992,6 +992,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 // the rest of the window), so getSlotsToQueryBlocks only ever returns the current
 // chain head and refreshChainHead makes no progress.
 func (t *EventTracker) unstickChainHead(
+	ctx context.Context,
 	slotsWithBlocks []uint64,
 ) (idleWait time.Duration, err error) {
 	// In case of the outage we advance with this
@@ -1000,6 +1001,18 @@ func (t *EventTracker) unstickChainHead(
 	if len(slotsWithBlocks) > 1 {
 		// resume from the last slot we know has a block
 		newChainHeadSlot = slotsWithBlocks[len(slotsWithBlocks)-1]
+	} else {
+		// If we have no slots with blocks, we advance by the offset to avoid getting stuck
+		// only if that doesn't exceed the current chain head slot
+		// in that case we just wait for the next block to be produced and don't advance the chain head
+		currentSlot, err := t.client.GetSlot(ctx, rpc.CommitmentConfirmed)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get current slot: %w", err)
+		}
+
+		if newChainHeadSlot > currentSlot {
+			newChainHeadSlot = t.chainHeadSlot
+		}
 	}
 
 	t.logger.Warn("Chain head stuck, force advancing",
