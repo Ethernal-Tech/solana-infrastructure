@@ -18,7 +18,7 @@ func TestBoltStorageHandler_GetEventsBySlot(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -67,7 +67,7 @@ func TestBoltStorageHandler_GetProcessedTxSignaturesBySlot(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -120,7 +120,7 @@ func TestBoltStorageHandler_UnprocessedTransactions(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -160,23 +160,6 @@ func TestBoltStorageHandler_UnprocessedTransactions(t *testing.T) {
 	queue, err = handler.GetAllUnprocessedTransactions()
 	require.NoError(t, err)
 	require.Equal(t, []TxPoint{pointA, pointB, pointC}, queue)
-
-	require.NoError(t, handler.RemoveProcessedTransaction(sigA))
-
-	queue, err = handler.GetAllUnprocessedTransactions()
-	require.NoError(t, err)
-	require.Equal(t, []TxPoint{pointB, pointC}, queue)
-
-	err = handler.RemoveProcessedTransaction(sigC)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not at the front")
-
-	require.NoError(t, handler.RemoveProcessedTransaction(sigB))
-	require.NoError(t, handler.RemoveProcessedTransaction(sigC))
-
-	queue, err = handler.GetAllUnprocessedTransactions()
-	require.NoError(t, err)
-	require.Empty(t, queue)
 }
 
 func TestBoltStorageHandler_LastProcessedTransaction(t *testing.T) {
@@ -188,7 +171,7 @@ func TestBoltStorageHandler_LastProcessedTransaction(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -232,7 +215,7 @@ func TestBoltStorageHandler_LatestQueriedTransaction(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -283,7 +266,7 @@ func TestBoltStorageHandler_PreSlotEntriesDecode(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -333,7 +316,7 @@ func TestBoltStorageHandler_FinalizeProcessedTransaction(t *testing.T) {
 	require.NoError(t, dbPath.Close())
 	require.NoError(t, os.Remove(dbPath.Name()))
 
-	handler, err := NewBoltStorageHandler(dbPath.Name(), false)
+	handler, err := NewBoltStorageHandler(dbPath.Name())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
