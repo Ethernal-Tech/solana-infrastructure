@@ -410,12 +410,14 @@ func (b *BoltStorageHandler) StoreEvent(
 
 		// Create EventRecord
 		record := EventRecord{
-			ID:          eventID,
-			Slot:        slot,
-			TxSignature: txSignature.String(),
-			Program:     programID.String(),
-			EventType:   eventName,
-			Data:        dataMap,
+			ID:              eventID,
+			Slot:            slot,
+			BlockNumber:     blockNumber,
+			InnerActionHash: innerActionHash,
+			TxSignature:     txSignature.String(),
+			Program:         programID.String(),
+			EventType:       eventName,
+			Data:            dataMap,
 		}
 
 		// Marshal EventRecord

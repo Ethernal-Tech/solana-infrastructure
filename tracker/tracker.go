@@ -427,7 +427,7 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 				}
 
 				return result, nil
-			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 			if err != nil {
 				return fmt.Errorf("failed to get block for event at slot %d: %w", transactionResponse.Slot, err)
 			}
@@ -697,7 +697,7 @@ func (t *EventTracker) catchUpLoop(
 			}
 
 			return signatures, nil
-		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 		if err != nil {
 			return nil, err
 		}
@@ -891,7 +891,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 			}
 
 			return result, nil
-		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 		if err != nil {
 			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
 
