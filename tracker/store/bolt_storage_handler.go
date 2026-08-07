@@ -636,53 +636,6 @@ func storeTxQueueTail(bucket *bolt.Bucket, tail uint64) error {
 	return bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail))
 }
 
-// migrateLegacyTxQueueList converts the old single-key JSON list into index-keyed entries.
-func (b *BoltStorageHandler) migrateLegacyTxQueueList(bucket *bolt.Bucket) error {
-	if bucket.Get(unprocessedTxQueueHeadKey) != nil || bucket.Get(unprocessedTxQueueTailKey) != nil {
-		return nil
-	}
-
-	data := bucket.Get(unprocessedTxSignaturesListKey)
-	if data == nil {
-		return nil
-	}
-
-	var sigStrings []string
-	if err := json.Unmarshal(data, &sigStrings); err != nil {
-		return fmt.Errorf("cannot unmarshal legacy unprocessed tx signatures: %w", err)
-	}
-
-	var tail uint64
-
-	for i, s := range sigStrings {
-		sig, err := solana.SignatureFromBase58(s)
-		if err != nil {
-			return fmt.Errorf("invalid legacy tx signature at index %d: %w", i, err)
-		}
-
-		// the legacy list carried no slot, so migrated entries keep slot 0
-		if err := bucket.Put(encodeUint64(tail), encodeTxPoint(TxPoint{TxSignature: sig})); err != nil {
-			return fmt.Errorf("cannot migrate legacy tx signature at index %d: %w", i, err)
-		}
-
-		tail++
-	}
-
-	if err := bucket.Delete(unprocessedTxSignaturesListKey); err != nil {
-		return fmt.Errorf("cannot delete legacy unprocessed tx signatures list: %w", err)
-	}
-
-	if tail == 0 {
-		return nil
-	}
-
-	if err := bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail)); err != nil {
-		return err
-	}
-
-	return bucket.Put(unprocessedTxQueueHeadKey, encodeUint64(0))
-}
-
 // encodeTxPoint serializes a TxPoint as signature bytes followed by the big-endian slot.
 func encodeTxPoint(txPoint TxPoint) []byte {
 	data := make([]byte, 0, len(txPoint.TxSignature)+8)
@@ -727,10 +680,6 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txPoints []TxPoint) err
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := b.unprocessedTxSignaturesBucket(tx)
 		if err != nil {
-			return err
-		}
-
-		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
 			return err
 		}
 
@@ -788,22 +737,7 @@ func setLastProcessedTransactionInBucket(bucket *bolt.Bucket, txPoint TxPoint) e
 	return bucket.Put(lastProcessedTxSignatureKey, encodeTxPoint(txPoint))
 }
 
-func (b *BoltStorageHandler) ensureTxQueueMigrated() error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		bucket, err := b.unprocessedTxSignaturesBucket(tx)
-		if err != nil {
-			return err
-		}
-
-		return b.migrateLegacyTxQueueList(bucket)
-	})
-}
-
 func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]TxPoint, error) {
-	if err := b.ensureTxQueueMigrated(); err != nil {
-		return nil, err
-	}
-
 	var result []TxPoint
 
 	err := b.db.View(func(tx *bolt.Tx) error {
@@ -858,10 +792,6 @@ func (b *BoltStorageHandler) FinalizeProcessedTransaction(txSignature solana.Sig
 	return b.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := b.unprocessedTxSignaturesBucket(tx)
 		if err != nil {
-			return err
-		}
-
-		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
 			return err
 		}
 
