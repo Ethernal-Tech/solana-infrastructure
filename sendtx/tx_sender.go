@@ -10,6 +10,7 @@ import (
 	"github.com/Ethernal-Tech/solana-infrastructure/wallet"
 	"github.com/gagliardetto/solana-go"
 	associatedtokenaccount "github.com/gagliardetto/solana-go/programs/associated-token-account"
+	computebudget "github.com/gagliardetto/solana-go/programs/compute-budget"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -431,7 +432,24 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		return nil, fmt.Errorf("failed to build batched ed25519 instruction: %w", err)
 	}
 
-	return []solana.Instruction{batchedEd25519Ix, bridgeTxIxFinal}, nil
+	instructions := []solana.Instruction{batchedEd25519Ix, bridgeTxIxFinal}
+
+	// If the transaction has the maximum number of receivers,
+	// we need to add a compute budget instruction to increase the compute unit limit for this transaction.
+	// This is necessary because transactions with many receivers can require
+	// more compute units than the default limit allows.
+	if len(tx.Receivers) == MaxBridgeTransactionReceivers {
+		computeBudgetIx, err := computebudget.NewSetComputeUnitLimitInstruction(
+			BridgeTransactionMaxReceiversComputeUnitLimit,
+		).ValidateAndBuild()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build compute unit limit instruction: %w", err)
+		}
+
+		instructions = append([]solana.Instruction{computeBudgetIx}, instructions...)
+	}
+
+	return instructions, nil
 }
 
 // deriveBridgeMintsAndTransfers builds the dedup'd mint list and per-receiver
