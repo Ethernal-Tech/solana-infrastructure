@@ -131,6 +131,7 @@ var (
 	eventIDCounterBucket             = []byte("event_id_counter")
 	unprocessedTxSignaturesBucket    = []byte("unprocessed_tx_signatures")
 	latestFinalizedBlockNumberBucket = []byte("latest_finalized_block_number")
+	eventIDsByBlockNumberBucket      = []byte("event_ids_by_block_number")
 
 	latestBlockPointKey = []byte("latestBlockPointKey")
 
@@ -190,6 +191,11 @@ func NewBoltStorageHandler(path string) (*BoltStorageHandler, error) {
 		_, err = tx.CreateBucketIfNotExists(latestFinalizedBlockNumberBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the latest finalized block number bucket: %w", err)
+		}
+
+		_, err = tx.CreateBucketIfNotExists(eventIDsByBlockNumberBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the event IDs by block number bucket: %w", err)
 		}
 
 		return nil
@@ -331,7 +337,13 @@ func (b *BoltStorageHandler) StoreEvent(
 		}
 
 		// Store with event ID as key
-		return unprocessedBucket.Put(encodeUint64(eventID), recordBytes)
+		if err := unprocessedBucket.Put(encodeUint64(eventID), recordBytes); err != nil {
+			return fmt.Errorf("cannot persist event record %d: %w", eventID, err)
+		}
+
+		// Index the event under its block number, in the same transaction as the record so the
+		// two can never disagree
+		return appendEventIDForBlockNumber(tx, blockNumber, eventID)
 	}
 
 	if tx == nil {
@@ -565,28 +577,101 @@ func (b *BoltStorageHandler) GetProcessedTxSignaturesBySlot(slot uint64) ([]sola
 	return signatures, nil
 }
 
+// decodeEventIDs unpacks the value of an eventIDsByBlockNumberBucket entry, which is a plain
+// concatenation of big-endian event IDs in the order the events were stored.
+func decodeEventIDs(data []byte) ([]uint64, error) {
+	if len(data)%8 != 0 {
+		return nil, fmt.Errorf("invalid event ID list length %d", len(data))
+	}
+
+	eventIDs := make([]uint64, 0, len(data)/8)
+
+	for offset := 0; offset < len(data); offset += 8 {
+		eventIDs = append(eventIDs, decodeUint64(data[offset:offset+8]))
+	}
+
+	return eventIDs, nil
+}
+
+// appendEventIDForBlockNumber adds eventID to the list indexed under blockNumber. A block can
+// contain several tracked events, emitted by one transaction or by many, so the index maps a
+// block number to every event ID it produced.
+func appendEventIDForBlockNumber(tx *bolt.Tx, blockNumber uint64, eventID uint64) error {
+	bucket := tx.Bucket(eventIDsByBlockNumberBucket)
+	if bucket == nil {
+		return fmt.Errorf("event IDs by block number bucket not found")
+	}
+
+	key := encodeUint64(blockNumber)
+	existing := bucket.Get(key)
+
+	// Get returns memory owned by bolt that the Put below may invalidate, so build a new slice
+	updated := make([]byte, 0, len(existing)+8)
+	updated = append(updated, existing...)
+	updated = append(updated, encodeUint64(eventID)...)
+
+	if err := bucket.Put(key, updated); err != nil {
+		return fmt.Errorf("cannot index event %d under block %d: %w", eventID, blockNumber, err)
+	}
+
+	return nil
+}
+
+// GetEventsByBlockNumber returns the events emitted by the given block, looked up through the
+// block number index rather than by scanning every stored event.
+//
+// Events written before the index existed have no entry, and events written before the block
+// number was persisted carry block number 0, so neither is reachable here. That is deliberate:
+// the only consumer walks block numbers forward and never revisits a block once it has passed,
+// so those records are never queried.
 func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
 	var results []EventRecord
 
 	err := b.db.View(func(tx *bolt.Tx) error {
-		for _, bucketName := range [][]byte{unprocessedEventsBucket, processedEventsBucket} {
-			bucket := tx.Bucket(bucketName)
-			if bucket == nil {
-				continue
+		index := tx.Bucket(eventIDsByBlockNumberBucket)
+		if index == nil {
+			return fmt.Errorf("event IDs by block number bucket not found")
+		}
+
+		data := index.Get(encodeUint64(blockNumber))
+		if data == nil {
+			return nil
+		}
+
+		eventIDs, err := decodeEventIDs(data)
+		if err != nil {
+			return fmt.Errorf("corrupt event index for block %d: %w", blockNumber, err)
+		}
+
+		unprocessed := tx.Bucket(unprocessedEventsBucket)
+		processed := tx.Bucket(processedEventsBucket)
+
+		results = make([]EventRecord, 0, len(eventIDs))
+
+		for _, eventID := range eventIDs {
+			key := encodeUint64(eventID)
+
+			var raw []byte
+
+			if unprocessed != nil {
+				raw = unprocessed.Get(key)
 			}
 
-			cursor := bucket.Cursor()
-
-			for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
-				var record EventRecord
-				if err := json.Unmarshal(v, &record); err != nil {
-					return fmt.Errorf("failed to unmarshal event record: %w", err)
-				}
-
-				if record.BlockNumber == blockNumber {
-					results = append(results, record)
-				}
+			if raw == nil && processed != nil {
+				raw = processed.Get(key)
 			}
+
+			if raw == nil {
+				return fmt.Errorf("event %d indexed under block %d is missing", eventID, blockNumber)
+			}
+
+			var record EventRecord
+
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return fmt.Errorf("failed to unmarshal event record %d: %w", eventID, err)
+			}
+
+			results = append(results, record)
 		}
 
 		return nil
