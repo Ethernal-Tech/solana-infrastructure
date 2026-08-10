@@ -24,17 +24,12 @@ type StorageTransaction any
 // mechanism, such as a relational database, a key-value store, or a file-based system, as long
 // as they correctly implement the methods described below.
 type StorageHandler interface {
-	// StoreBlock persists a BlockPoint in the per-slot block index. When the
-	// block is first discovered via the chain head it is stored with Processed
-	// set to false. Once the tracker's catch-up loop fully processes that slot
-	// the same method is called again with Processed set to true, updating the
-	// existing entry. If the method returns an error, the tracker will terminate
-	// immediately.
+	// StoreBlock persists a BlockPoint in the per-slot block index.
 	StoreBlock(StorageTransaction, BlockPoint) error
 
 	// GetBlockhashBySlot returns the block hash stored for the given slot. If no hash exists for
-	// that exact slot (i.e. it was an empty/skipped slot), it walks forward by incrementing the
-	// slot number until a hash is found or the current indexing head (ReadSlot) is exceeded, in
+	// that exact slot (i.e. it was an empty/skipped slot), it walks backwards by decrementing the
+	// slot number until a hash is found or the existing slots are depleted, in
 	// which case an error is returned.
 	GetBlockhashBySlot(uint64) (solana.Hash, error)
 
@@ -48,9 +43,26 @@ type StorageHandler interface {
 	// GetLatestBlockPoint returns the latest block point data, i.e. block slot and block hash.
 	GetLatestBlockPoint() (*BlockPoint, error)
 
+	// StoreLatestFinalizedBlockNumber records the block number up to which the tracker has
+	// finalized its work, overwriting the previous value. The tracker only ever advances it,
+	// but the store itself does not enforce that.
+	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
+
+	// GetLatestFinalizedBlockNumber returns the last stored finalized block number, or 0 if none
+	// has been stored yet.
+	GetLatestFinalizedBlockNumber() (uint64, error)
+
+	// StoreEvent is invoked by the tracker after each successfully processed tracked event.
+	StoreEvent(StorageTransaction, uint64, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
+
 	// GetEventsBySlot returns all tracked events stored for the given slot, from both the
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
+
+	// GetEventsByBlockNumber returns the events emitted by the given block, in the order they
+	// were stored, looked up through the block number index rather than by scanning every stored
+	// event. Events stored without a block number are not reachable here.
+	GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error)
 
 	// GetProcessedTxSignaturesBySlot returns the distinct signatures of the transactions that
 	// produced stored events in the given slot, in the order the events were stored. It is
@@ -58,37 +70,40 @@ type StorageHandler interface {
 	// event; a processed transaction that emitted none is not included.
 	GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error)
 
-	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
-	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
-	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
-	// backend, see [ApplyTransaction] for more information. The remaining arguments are, in order:
-	// the slot number in which the event occurred, the signature of the transaction that generated
-	// the event, the public key (address) of the Solana program that emitted the event, the event
-	// name as registered in the [ProgramEventSpecs] config, and the deserialized event itself. If
-	// the method returns an error, the tracker will terminate immediately.
-	StoreEvent(StorageTransaction, uint64, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
-
-	TxStorageHandler
-
-	Close() error
-}
-
-type TxStorageHandler interface {
+	// PushUnprocessedTransactions appends the given transactions to the back of the queue of
+	// transactions awaiting processing, keeping the order they are passed in (oldest first).
+	// Entries with a zero signature are ignored.
 	PushUnprocessedTransactions(txPoints []TxPoint) error
+
+	// GetAllUnprocessedTransactions returns every queued transaction that has not been processed
+	// yet, front (oldest) first. An empty result means the queue is drained.
 	GetAllUnprocessedTransactions() ([]TxPoint, error)
-	SetLastProcessedTransaction(txPoint TxPoint) error
-	GetLastProcessedTransaction() (TxPoint, error)
-	// StoreLatestQueriedTransaction records the newest transaction returned by
-	// getSignaturesForAddress, that is, the point new queries resume from.
-	StoreLatestQueriedTransaction(txPoint TxPoint) error
-	GetLatestQueriedTransaction() (TxPoint, error)
+
 	// FinalizeProcessedTransaction atomically removes txSignature from the front of the
 	// unprocessed queue and stores it as the last processed transaction.
 	FinalizeProcessedTransaction(txSignature solana.Signature) error
-	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
-	GetLatestFinalizedBlockNumber() (uint64, error)
 
-	GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error)
+	// SetLastProcessedTransaction overwrites the last processed transaction marker without
+	// touching the unprocessed queue. It is meant for transactions the tracker skips rather than
+	// processes; transactions that are actually processed go through
+	// [StorageHandler.FinalizeProcessedTransaction].
+	SetLastProcessedTransaction(txPoint TxPoint) error
+
+	// GetLastProcessedTransaction returns the transaction the tracker last processed or skipped.
+	// A zero TxPoint means none has been recorded yet.
+	GetLastProcessedTransaction() (TxPoint, error)
+
+	// StoreLatestQueriedTransaction records the newest transaction returned by
+	// getSignaturesForAddress, that is, the point new queries resume from.
+	StoreLatestQueriedTransaction(txPoint TxPoint) error
+
+	// GetLatestQueriedTransaction returns the transaction last recorded by
+	// [StorageHandler.StoreLatestQueriedTransaction]. A zero TxPoint means no query has been
+	// recorded yet, so the next query starts from the newest transaction on chain.
+	GetLatestQueriedTransaction() (TxPoint, error)
+
+	// Close releases the underlying storage resources. The handler must not be used afterwards.
+	Close() error
 }
 
 type BoltStorageHandler struct {
