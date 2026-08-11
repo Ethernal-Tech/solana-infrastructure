@@ -288,58 +288,6 @@ func (t *EventTracker) initialize() error {
 		t.chainHeadSlot = latestBlockPoint.BlockSlot
 	}
 
-	return t.backfillLatestQueriedTransaction()
-}
-
-// backfillLatestQueriedTransaction populates the latest queried transaction for
-// databases written before it was persisted, where the record is missing but the
-// tracker has already made progress. Without it, the first query would resume from
-// the beginning of the program history. The value is reconstructed the same way the
-// tracker used to derive it: the newest unprocessed transaction if any are pending,
-// otherwise the last processed one.
-func (t *EventTracker) backfillLatestQueriedTransaction() error {
-	latestQueried, err := t.storage.GetLatestQueriedTransaction()
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to get latest queried transaction: %s", err.Error()))
-
-		return err
-	}
-
-	if latestQueried.TxSignature != (solana.Signature{}) {
-		return nil
-	}
-
-	unprocessedTxPoints, err := t.storage.GetAllUnprocessedTransactions()
-	if err != nil {
-		t.logger.Warn(fmt.Sprintf("Failed to get all unprocessed transactions: %s", err.Error()))
-
-		return err
-	}
-
-	if len(unprocessedTxPoints) > 0 {
-		latestQueried = unprocessedTxPoints[len(unprocessedTxPoints)-1]
-	} else {
-		latestQueried, err = t.storage.GetLastProcessedTransaction()
-		if err != nil {
-			t.logger.Warn(fmt.Sprintf("Failed to get last processed transaction: %s", err.Error()))
-
-			return err
-		}
-	}
-
-	// nothing to backfill, this is a first run
-	if latestQueried.TxSignature == (solana.Signature{}) {
-		return nil
-	}
-
-	t.logger.Info("Backfilling latest queried transaction",
-		"tx signature", latestQueried.TxSignature.String(),
-		"slot", latestQueried.Slot)
-
-	if err := t.storage.StoreLatestQueriedTransaction(latestQueried); err != nil {
-		return fmt.Errorf("failed to backfill latest queried transaction: %w", err)
-	}
-
 	return nil
 }
 
@@ -479,7 +427,7 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 				}
 
 				return result, nil
-			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 			if err != nil {
 				return fmt.Errorf("failed to get block for event at slot %d: %w", transactionResponse.Slot, err)
 			}
@@ -749,7 +697,7 @@ func (t *EventTracker) catchUpLoop(
 			}
 
 			return signatures, nil
-		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 		if err != nil {
 			return nil, err
 		}
@@ -943,7 +891,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 			}
 
 			return result, nil
-		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime))
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 		if err != nil {
 			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
 

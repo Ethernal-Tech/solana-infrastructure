@@ -47,7 +47,7 @@ func NewBoltStorage(t *testing.T) *store.BoltStorageHandler {
 
 	path := filepath.Join(t.TempDir(), "tracker.db")
 
-	storage, err := store.NewBoltStorageHandler(path, false)
+	storage, err := store.NewBoltStorageHandler(path)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {

@@ -31,14 +31,14 @@ const (
 	// forces the tracker through extra pages before it reaches the end.
 	catchUpHistoryTxCount = 2500
 
-	// backfillHistoryTxCount is the history size for the backfill test, which has to
+	// wholeHistoryTxCount is the history size for the whole-history test, which has to
 	// process every one of these transactions rather than skip them. It still exceeds a
 	// single signature page, so the catch-up paging is exercised too.
-	backfillHistoryTxCount = 1200
+	wholeHistoryTxCount = 1200
 
-	// backfillTimeout bounds how long the backfill test waits for the whole history to be
-	// delivered before giving up.
-	backfillTimeout = 3 * time.Minute
+	// wholeHistoryTimeout bounds how long the whole-history test waits for the entire
+	// history to be delivered before giving up.
+	wholeHistoryTimeout = 3 * time.Minute
 
 	// The restart test alternates between running and being down. Each live phase has to
 	// be long enough to see several transactions, and the downtime long enough for the
@@ -49,18 +49,6 @@ const (
 	// restartCatchUpTimeout bounds how long the restarted tracker gets to work through the
 	// backlog that built up while it was down.
 	restartCatchUpTimeout = time.Minute
-
-	// backfillResumeOffset is how far back in the history the backfill test puts the last
-	// processed transaction, leaving that many minus one for the tracker to still deliver.
-	backfillResumeOffset = 6
-
-	// backfillQueuedCount is how many transactions the backfill test leaves sitting in the
-	// unprocessed queue, as an interrupted run would.
-	backfillQueuedCount = 3
-
-	// backfillCatchUpTimeout bounds how long the tracker gets to deliver what a backfilled
-	// database still owes.
-	backfillCatchUpTimeout = 30 * time.Second
 
 	// outageGapSlots is the length of the empty run the outage test injects. It has to
 	// exceed chainHeadWindowSlots, so that a whole getBlocks query lands inside the gap and
@@ -269,19 +257,19 @@ func TestEventTracker_SkipsAllHistoryOnStartup(t *testing.T) {
 		len(history), newestSkipped.Slot, len(run.delivered), run.startFromSlot)
 }
 
-// TestEventTracker_BackfillsWholeHistory starts the tracker with no StartFromSlot, which is
+// TestEventTracker_IndexesWholeHistory starts the tracker with no StartFromSlot, which is
 // the "index everything this program ever did" configuration. Nothing may be skipped: the
 // tracker has to page through the whole history and then deliver every transaction in it, in
 // production order, before it moves on to live ones.
-func TestEventTracker_BackfillsWholeHistory(t *testing.T) {
+func TestEventTracker_IndexesWholeHistory(t *testing.T) {
 	cfg := trackertest.DefaultConfig()
-	cfg.HistoryTxCount = backfillHistoryTxCount
+	cfg.HistoryTxCount = wholeHistoryTxCount
 	// Draining the history is bound by how fast the tracker can be answered, not by the
 	// chain, so keep the RPC responses immediate.
 	cfg.RPCLatency = 0
 
 	sim := trackertest.NewChainSimulator(t, cfg)
-	require.GreaterOrEqual(t, sim.ProducedTxCount(), backfillHistoryTxCount)
+	require.GreaterOrEqual(t, sim.ProducedTxCount(), wholeHistoryTxCount)
 
 	historyTxCount := sim.ProducedTxCount()
 
@@ -290,7 +278,7 @@ func TestEventTracker_BackfillsWholeHistory(t *testing.T) {
 		// Leaving startFromSlot unset would index the same transactions, but it also
 		// starts the chain head refresher at slot zero, from where it never catches up.
 		startFromSlot: sim.GenesisSlot(),
-		duration:      backfillTimeout,
+		duration:      wholeHistoryTimeout,
 		waitForEvents: historyTxCount,
 		rpcLimits:     generousRPCMethodLimits(),
 	})
@@ -1016,155 +1004,6 @@ func requireLatestBlockPoint(t *testing.T, run *simRun) *store.BlockPoint {
 	require.NotNil(t, blockPoint, "no chain head was stored")
 
 	return blockPoint
-}
-
-// TestEventTracker_BackfillsLatestQueriedTransaction covers databases that carry progress but
-// no latest-queried-transaction record: the ones written before that record existed, and the
-// ones that lose it. The tracker has to reconstruct it on startup and carry on from there,
-// rather than resume from the beginning of the program's history.
-//
-// A missing record and a zero-valued one are the same thing to every reader of the store, so
-// the tests that need one write the zero value.
-func TestEventTracker_BackfillsLatestQueriedTransaction(t *testing.T) {
-	t.Run("reconstructed from the last processed transaction", func(t *testing.T) {
-		sim := trackertest.NewChainSimulator(t, trackertest.DefaultConfig())
-
-		// Everything the chain produced before the tracker ever ran.
-		history := sim.ProducedTxsFromSlot(sim.GenesisSlot())
-		require.Greater(t, len(history), backfillResumeOffset)
-
-		// The database looks like one an older version left behind: it knows which
-		// transaction it processed last, but not which one it queried last.
-		resumeFrom := history[len(history)-backfillResumeOffset]
-
-		run := newSimRun(t, sim, runConfig{
-			startFromSlot: resumeFrom.Slot,
-			// One transaction per block, so the slot after the resume point is where
-			// the transactions the tracker still owes us start.
-			expectFromSlot: resumeFrom.Slot + 1,
-		})
-
-		require.NoError(t, run.storage.SetLastProcessedTransaction(txPointOf(resumeFrom)))
-		requireNoLatestQueriedTransaction(t, run)
-
-		run.startTracker()
-		run.waitForDelivered(backfillResumeOffset-1, backfillCatchUpTimeout)
-		run.stopTracker()
-
-		requireBackfillRan(t, run)
-
-		// It must have carried on from the last processed transaction, so the events it
-		// owed us arrive and none of the older history is replayed.
-		requireDeliveredPrefix(t, run)
-		require.GreaterOrEqual(t, len(run.delivered), backfillResumeOffset-1,
-			"the transactions after the last processed one were not delivered")
-		requireTxStateConsistent(t, run)
-		requireChainHeadAdvanced(t, run)
-	})
-
-	t.Run("reconstructed from the queued transactions", func(t *testing.T) {
-		sim := trackertest.NewChainSimulator(t, trackertest.DefaultConfig())
-
-		history := sim.ProducedTxsFromSlot(sim.GenesisSlot())
-		require.Greater(t, len(history), backfillQueuedCount+1)
-
-		// This database was interrupted between querying signatures and processing them,
-		// so the queue holds transactions newer than the last processed one.
-		queued := history[len(history)-backfillQueuedCount:]
-		lastProcessed := history[len(history)-backfillQueuedCount-1]
-
-		run := newSimRun(t, sim, runConfig{
-			startFromSlot:  lastProcessed.Slot,
-			expectFromSlot: queued[0].Slot,
-		})
-
-		require.NoError(t, run.storage.SetLastProcessedTransaction(txPointOf(lastProcessed)))
-
-		queuedTxPoints := make([]store.TxPoint, 0, len(queued))
-		for _, tx := range queued {
-			queuedTxPoints = append(queuedTxPoints, txPointOf(tx))
-		}
-
-		require.NoError(t, run.storage.PushUnprocessedTransactions(queuedTxPoints))
-		requireNoLatestQueriedTransaction(t, run)
-
-		run.startTracker()
-		run.waitForDelivered(len(queued), backfillCatchUpTimeout)
-		run.stopTracker()
-
-		requireBackfillRan(t, run)
-
-		// The newest queued transaction is the furthest the database can prove it got,
-		// so that is where new queries have to resume from.
-		latestQueried, err := run.storage.GetLatestQueriedTransaction()
-		require.NoError(t, err)
-		require.Equal(t, queued[len(queued)-1].Signature, latestQueried.TxSignature,
-			"the query cursor was not reconstructed from the newest queued transaction")
-
-		requireDeliveredPrefix(t, run)
-		require.GreaterOrEqual(t, len(run.delivered), len(queued),
-			"the queued transactions were not processed")
-		requireTxStateConsistent(t, run)
-		requireChainHeadAdvanced(t, run)
-	})
-
-	t.Run("record removed from a live database", func(t *testing.T) {
-		sim := trackertest.NewChainSimulator(t, trackertest.DefaultConfig())
-		run := newSimRun(t, sim, runConfig{startFromChainHead: true})
-
-		run.startTracker()
-		time.Sleep(restartLivePhase)
-		run.stopTracker()
-
-		requireDeliveredPrefix(t, run)
-
-		deliveredBeforeRemoval := len(run.delivered)
-		require.NotEmpty(t, deliveredBeforeRemoval, "nothing was delivered before the record was removed")
-
-		// Drop the record from a database that has real progress in it.
-		requireNoLatestQueriedTransaction(t, run)
-
-		run.startTracker()
-		run.waitForDelivered(deliveredBeforeRemoval+1, backfillCatchUpTimeout)
-		run.stopTracker()
-
-		requireBackfillRan(t, run)
-
-		// Losing the record may not cost or duplicate a single event.
-		requireDeliveredPrefix(t, run)
-		require.Greater(t, len(run.delivered), deliveredBeforeRemoval,
-			"the tracker delivered nothing after the record was removed")
-		requireKeptUpWithChain(t, run)
-		requireTxStateConsistent(t, run)
-		requireChainHeadAdvanced(t, run)
-	})
-}
-
-// requireNoLatestQueriedTransaction puts the store into the state a database without the
-// latest-queried-transaction record is in.
-func requireNoLatestQueriedTransaction(t *testing.T, run *simRun) {
-	t.Helper()
-
-	require.NoError(t, run.storage.StoreLatestQueriedTransaction(store.TxPoint{}))
-
-	latestQueried, err := run.storage.GetLatestQueriedTransaction()
-	require.NoError(t, err)
-	require.Equal(t, solana.Signature{}, latestQueried.TxSignature,
-		"the latest queried transaction was supposed to be cleared")
-}
-
-// requireBackfillRan checks the tracker actually took the backfill branch on startup, so a
-// test cannot pass because the record was never missing in the first place.
-func requireBackfillRan(t *testing.T, run *simRun) {
-	t.Helper()
-
-	require.Contains(t, run.logs.String(), "Backfilling latest queried transaction",
-		"the tracker did not backfill the latest queried transaction on startup")
-
-	latestQueried, err := run.storage.GetLatestQueriedTransaction()
-	require.NoError(t, err)
-	require.NotEqual(t, solana.Signature{}, latestQueried.TxSignature,
-		"the latest queried transaction is still missing after startup")
 }
 
 func txPointOf(tx *trackertest.Tx) store.TxPoint {

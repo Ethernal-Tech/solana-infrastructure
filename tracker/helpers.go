@@ -56,6 +56,12 @@ func WithRetryWaitTime(retryWaitTime time.Duration) RetryConfigOption {
 	}
 }
 
+func WithLogger(logger hclog.Logger) RetryConfigOption {
+	return func(c *RetryConfig) {
+		c.logger = logger
+	}
+}
+
 // ExecuteWithRetry attempts to execute a provided handler function multiple times
 // with retries in case of failure, respecting a specified wait time between attempts.
 func ExecuteWithRetry[T any](

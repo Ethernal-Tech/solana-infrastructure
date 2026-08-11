@@ -24,35 +24,12 @@ type StorageTransaction any
 // mechanism, such as a relational database, a key-value store, or a file-based system, as long
 // as they correctly implement the methods described below.
 type StorageHandler interface {
-	// ReadSlot is invoked exactly once by the tracker during startup, that is, when the [Start]
-	// method is called. This method must return the slot number from which the tracker should
-	// begin monitoring and processing blocks (for example, if it returns 247, then slot 247
-	// will be the first slot processed by the tracker upon startup). If the method returns an
-	// error, the tracker will not even start and will terminate immediately.
-	ReadSlot() (uint64, error)
-
-	// StoreSlot is invoked by the tracker after every successfully processed slot. Note that a
-	// slot does not necessarily contain a block, however, the method will still be invoked for
-	// those empty slots. In transaction-like mode, the method is not invoked directly but rather
-	// wrapped and passed to [ApplyTransaction]. The first argument is a transaction object from
-	// the underlying storage backend, see [ApplyTransaction] for more information. The second
-	// argument is the slot number that was just processed, and the implementation is responsible
-	// for incrementing this value by one before storing it. This ensures that when [ReadSlot] is
-	// invoked on the next startup, it returns correct starting slot. If the method returns an
-	// error, the tracker will terminate immediately.
-	StoreSlot(StorageTransaction, uint64) error
-
-	// StoreBlock persists a BlockPoint in the per-slot block index. When the
-	// block is first discovered via the chain head it is stored with Processed
-	// set to false. Once the tracker's catch-up loop fully processes that slot
-	// the same method is called again with Processed set to true, updating the
-	// existing entry. If the method returns an error, the tracker will terminate
-	// immediately.
+	// StoreBlock persists a BlockPoint in the per-slot block index.
 	StoreBlock(StorageTransaction, BlockPoint) error
 
 	// GetBlockhashBySlot returns the block hash stored for the given slot. If no hash exists for
-	// that exact slot (i.e. it was an empty/skipped slot), it walks forward by incrementing the
-	// slot number until a hash is found or the current indexing head (ReadSlot) is exceeded, in
+	// that exact slot (i.e. it was an empty/skipped slot), it walks backwards by decrementing the
+	// slot number until a hash is found or the existing slots are depleted, in
 	// which case an error is returned.
 	GetBlockhashBySlot(uint64) (solana.Hash, error)
 
@@ -66,9 +43,26 @@ type StorageHandler interface {
 	// GetLatestBlockPoint returns the latest block point data, i.e. block slot and block hash.
 	GetLatestBlockPoint() (*BlockPoint, error)
 
+	// StoreLatestFinalizedBlockNumber records the block number up to which the tracker has
+	// finalized its work, overwriting the previous value. The tracker only ever advances it,
+	// but the store itself does not enforce that.
+	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
+
+	// GetLatestFinalizedBlockNumber returns the last stored finalized block number, or 0 if none
+	// has been stored yet.
+	GetLatestFinalizedBlockNumber() (uint64, error)
+
+	// StoreEvent is invoked by the tracker after each successfully processed tracked event.
+	StoreEvent(StorageTransaction, uint64, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
+
 	// GetEventsBySlot returns all tracked events stored for the given slot, from both the
 	// unprocessed and processed indexer event buckets.
 	GetEventsBySlot(slot uint64) ([]EventRecord, error)
+
+	// GetEventsByBlockNumber returns the events emitted by the given block, in the order they
+	// were stored, looked up through the block number index rather than by scanning every stored
+	// event. Events stored without a block number are not reachable here.
+	GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error)
 
 	// GetProcessedTxSignaturesBySlot returns the distinct signatures of the transactions that
 	// produced stored events in the given slot, in the order the events were stored. It is
@@ -76,67 +70,44 @@ type StorageHandler interface {
 	// event; a processed transaction that emitted none is not included.
 	GetProcessedTxSignaturesBySlot(slot uint64) ([]solana.Signature, error)
 
-	// StoreEvent is invoked by the tracker after each successfully processed tracked event. In
-	// transaction-like mode, the method is not invoked directly but rather wrapped and passed to
-	// [ApplyTransaction]. The first argument is a transaction object from the underlying storage
-	// backend, see [ApplyTransaction] for more information. The remaining arguments are, in order:
-	// the slot number in which the event occurred, the signature of the transaction that generated
-	// the event, the public key (address) of the Solana program that emitted the event, the event
-	// name as registered in the [ProgramEventSpecs] config, and the deserialized event itself. If
-	// the method returns an error, the tracker will terminate immediately.
-	StoreEvent(StorageTransaction, uint64, uint64, solana.Signature, solana.PublicKey, string, [32]byte, any) error
-
-	// UseTransactions is invoked exactly once by the tracker during startup, that is, when the
-	// [Start] method is called. This method should return true if the storage backend supports
-	// a transaction-like (all-or-nothing) mode and the tracker should use it. Using transactional
-	// writes is the recommended approach because it prevents data inconsistency that can occur
-	// during system restarts. Without it, if the tracker processes a slot with multiple events
-	// and successfully stores some of them before crashing, the slot number will not have been
-	// updated. When the tracker starts again, it will process the same slot again, leading to
-	// duplicate event entries in storage. By using transactions, either all events from a slot
-	// are stored together with the updated slot, or none of them are.
-	UseTransactions() bool
-
-	// ApplyTransaction is invoked by the tracker after processing each slot, but only if the
-	// invocation of [UseTransactions] returned true. This method receives two arguments: first,
-	// a function that wraps the invocation of the [StoreSlot] method for the current slot, and
-	// second, a list of functions where each one wraps a [StoreEvent] invocation for a single
-	// tracked event found in that slot. Each wrapper function accepts a transaction object as
-	// its argument, which it then passes to the underlying [StoreSlot] or [StoreEvent] method
-	// call. So, the implementation should create/begin a transaction, call all wrapper functions
-	// by passing the transaction object to each one, and then commit or rollback the transaction
-	// after all invocations complete. This approach ensures that either all storage operations
-	// for a given slot are persisted together atomically, or none of them are saved if any
-	// operation fails. If this method returns an error, the tracker will terminate immediately.
-	ApplyTransaction(func(StorageTransaction) error, []func(StorageTransaction) error) error
-
-	TxStorageHandler
-
-	Close() error
-}
-
-type TxStorageHandler interface {
+	// PushUnprocessedTransactions appends the given transactions to the back of the queue of
+	// transactions awaiting processing, keeping the order they are passed in (oldest first).
+	// Entries with a zero signature are ignored.
 	PushUnprocessedTransactions(txPoints []TxPoint) error
-	RemoveProcessedTransaction(txSignature solana.Signature) error
+
+	// GetAllUnprocessedTransactions returns every queued transaction that has not been processed
+	// yet, front (oldest) first. An empty result means the queue is drained.
 	GetAllUnprocessedTransactions() ([]TxPoint, error)
-	SetLastProcessedTransaction(txPoint TxPoint) error
-	GetLastProcessedTransaction() (TxPoint, error)
-	// StoreLatestQueriedTransaction records the newest transaction returned by
-	// getSignaturesForAddress, that is, the point new queries resume from.
-	StoreLatestQueriedTransaction(txPoint TxPoint) error
-	GetLatestQueriedTransaction() (TxPoint, error)
+
 	// FinalizeProcessedTransaction atomically removes txSignature from the front of the
 	// unprocessed queue and stores it as the last processed transaction.
 	FinalizeProcessedTransaction(txSignature solana.Signature) error
-	StoreLatestFinalizedBlockNumber(blockNumber uint64) error
-	GetLatestFinalizedBlockNumber() (uint64, error)
 
-	GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error)
+	// SetLastProcessedTransaction overwrites the last processed transaction marker without
+	// touching the unprocessed queue. It is meant for transactions the tracker skips rather than
+	// processes; transactions that are actually processed go through
+	// [StorageHandler.FinalizeProcessedTransaction].
+	SetLastProcessedTransaction(txPoint TxPoint) error
+
+	// GetLastProcessedTransaction returns the transaction the tracker last processed or skipped.
+	// A zero TxPoint means none has been recorded yet.
+	GetLastProcessedTransaction() (TxPoint, error)
+
+	// StoreLatestQueriedTransaction records the newest transaction returned by
+	// getSignaturesForAddress, that is, the point new queries resume from.
+	StoreLatestQueriedTransaction(txPoint TxPoint) error
+
+	// GetLatestQueriedTransaction returns the transaction last recorded by
+	// [StorageHandler.StoreLatestQueriedTransaction]. A zero TxPoint means no query has been
+	// recorded yet, so the next query starts from the newest transaction on chain.
+	GetLatestQueriedTransaction() (TxPoint, error)
+
+	// Close releases the underlying storage resources. The handler must not be used afterwards.
+	Close() error
 }
 
 type BoltStorageHandler struct {
-	txMode bool
-	db     *bolt.DB
+	db *bolt.DB
 }
 
 var _ StorageHandler = &BoltStorageHandler{}
@@ -167,7 +138,6 @@ type TxPoint struct {
 }
 
 var (
-	slotBucket                       = []byte("slot")
 	blocksBucket                     = []byte("blocks")
 	blockHashToNumberBucket          = []byte("block_hash_to_number")
 	latestBlockPointBucket           = []byte("latestBlockPoint")
@@ -176,8 +146,8 @@ var (
 	eventIDCounterBucket             = []byte("event_id_counter")
 	unprocessedTxSignaturesBucket    = []byte("unprocessed_tx_signatures")
 	latestFinalizedBlockNumberBucket = []byte("latest_finalized_block_number")
+	eventIDsByBlockNumberBucket      = []byte("event_ids_by_block_number")
 
-	currentSlotKey      = []byte("current")
 	latestBlockPointKey = []byte("latestBlockPointKey")
 
 	unprocessedTxQueueHeadKey      = []byte("head")
@@ -188,18 +158,13 @@ var (
 	latestFinalizedBlockNumberKey  = []byte("latest_finalized_block_number_key")
 )
 
-func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error) {
+func NewBoltStorageHandler(path string) (*BoltStorageHandler, error) {
 	db, err := bolt.Open(path, 0600, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open bolt db: %w", err)
 	}
 
 	if err := db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(slotBucket)
-		if err != nil {
-			return fmt.Errorf("cannot create the slot bucket: %w", err)
-		}
-
 		_, err = tx.CreateBucketIfNotExists(blocksBucket)
 		if err != nil {
 			return fmt.Errorf("cannot create the blocks bucket: %w", err)
@@ -243,12 +208,17 @@ func NewBoltStorageHandler(path string, txMode bool) (*BoltStorageHandler, error
 			return fmt.Errorf("cannot create the latest finalized block number bucket: %w", err)
 		}
 
+		_, err = tx.CreateBucketIfNotExists(eventIDsByBlockNumberBucket)
+		if err != nil {
+			return fmt.Errorf("cannot create the event IDs by block number bucket: %w", err)
+		}
+
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 
-	return &BoltStorageHandler{txMode, db}, nil
+	return &BoltStorageHandler{db}, nil
 }
 
 func (b *BoltStorageHandler) Close() error {
@@ -288,51 +258,6 @@ func (b *BoltStorageHandler) getNextEventID(tx *bolt.Tx) (uint64, error) {
 	}
 
 	return nextID, nil
-}
-
-func (b *BoltStorageHandler) ReadSlot() (uint64, error) {
-	var retValue uint64
-
-	if err := b.db.View(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(slotBucket)
-		if bucket == nil {
-			return fmt.Errorf("cannot find slot bucket")
-		}
-
-		value := bucket.Get(currentSlotKey)
-		if value == nil {
-			retValue = 0
-		} else {
-			retValue = decodeUint64(value)
-		}
-
-		return nil
-	}); err != nil {
-		return 0, err
-	}
-
-	return retValue, nil
-}
-
-func (b *BoltStorageHandler) StoreSlot(tx StorageTransaction, slot uint64) error {
-	storeFn := func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(slotBucket)
-		if bucket == nil {
-			return fmt.Errorf("cannot find slot bucket")
-		}
-
-		return bucket.Put(currentSlotKey, encodeUint64(slot+1))
-	}
-
-	if tx == nil {
-		return b.db.Update(storeFn)
-	}
-
-	if tx, ok := tx.(*bolt.Tx); ok {
-		return storeFn(tx)
-	}
-
-	return fmt.Errorf("unknown storage transaction type: %T", tx)
 }
 
 func (b *BoltStorageHandler) StoreBlock(tx StorageTransaction, bp BlockPoint) error {
@@ -410,12 +335,14 @@ func (b *BoltStorageHandler) StoreEvent(
 
 		// Create EventRecord
 		record := EventRecord{
-			ID:          eventID,
-			Slot:        slot,
-			TxSignature: txSignature.String(),
-			Program:     programID.String(),
-			EventType:   eventName,
-			Data:        dataMap,
+			ID:              eventID,
+			Slot:            slot,
+			BlockNumber:     blockNumber,
+			InnerActionHash: innerActionHash,
+			TxSignature:     txSignature.String(),
+			Program:         programID.String(),
+			EventType:       eventName,
+			Data:            dataMap,
 		}
 
 		// Marshal EventRecord
@@ -425,7 +352,13 @@ func (b *BoltStorageHandler) StoreEvent(
 		}
 
 		// Store with event ID as key
-		return unprocessedBucket.Put(encodeUint64(eventID), recordBytes)
+		if err := unprocessedBucket.Put(encodeUint64(eventID), recordBytes); err != nil {
+			return fmt.Errorf("cannot persist event record %d: %w", eventID, err)
+		}
+
+		// Index the event under its block number, in the same transaction as the record so the
+		// two can never disagree
+		return appendEventIDForBlockNumber(tx, blockNumber, eventID)
 	}
 
 	if tx == nil {
@@ -437,24 +370,6 @@ func (b *BoltStorageHandler) StoreEvent(
 	}
 
 	return fmt.Errorf("unknown storage transaction type: %T", tx)
-}
-
-func (b *BoltStorageHandler) UseTransactions() bool {
-	return b.txMode
-}
-
-func (b *BoltStorageHandler) ApplyTransaction(
-	slotFn func(StorageTransaction) error,
-	eventFns []func(StorageTransaction) error) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		for _, fn := range eventFns {
-			if err := fn(tx); err != nil {
-				return err
-			}
-		}
-
-		return slotFn(tx)
-	})
 }
 
 func (b *BoltStorageHandler) GetBlockhashBySlot(slot uint64) (solana.Hash, error) {
@@ -677,28 +592,101 @@ func (b *BoltStorageHandler) GetProcessedTxSignaturesBySlot(slot uint64) ([]sola
 	return signatures, nil
 }
 
+// decodeEventIDs unpacks the value of an eventIDsByBlockNumberBucket entry, which is a plain
+// concatenation of big-endian event IDs in the order the events were stored.
+func decodeEventIDs(data []byte) ([]uint64, error) {
+	if len(data)%8 != 0 {
+		return nil, fmt.Errorf("invalid event ID list length %d", len(data))
+	}
+
+	eventIDs := make([]uint64, 0, len(data)/8)
+
+	for offset := 0; offset < len(data); offset += 8 {
+		eventIDs = append(eventIDs, decodeUint64(data[offset:offset+8]))
+	}
+
+	return eventIDs, nil
+}
+
+// appendEventIDForBlockNumber adds eventID to the list indexed under blockNumber. A block can
+// contain several tracked events, emitted by one transaction or by many, so the index maps a
+// block number to every event ID it produced.
+func appendEventIDForBlockNumber(tx *bolt.Tx, blockNumber uint64, eventID uint64) error {
+	bucket := tx.Bucket(eventIDsByBlockNumberBucket)
+	if bucket == nil {
+		return fmt.Errorf("event IDs by block number bucket not found")
+	}
+
+	key := encodeUint64(blockNumber)
+	existing := bucket.Get(key)
+
+	// Get returns memory owned by bolt that the Put below may invalidate, so build a new slice
+	updated := make([]byte, 0, len(existing)+8)
+	updated = append(updated, existing...)
+	updated = append(updated, encodeUint64(eventID)...)
+
+	if err := bucket.Put(key, updated); err != nil {
+		return fmt.Errorf("cannot index event %d under block %d: %w", eventID, blockNumber, err)
+	}
+
+	return nil
+}
+
+// GetEventsByBlockNumber returns the events emitted by the given block, looked up through the
+// block number index rather than by scanning every stored event.
+//
+// Events written before the index existed have no entry, and events written before the block
+// number was persisted carry block number 0, so neither is reachable here. That is deliberate:
+// the only consumer walks block numbers forward and never revisits a block once it has passed,
+// so those records are never queried.
 func (b *BoltStorageHandler) GetEventsByBlockNumber(blockNumber uint64) ([]EventRecord, error) {
 	var results []EventRecord
 
 	err := b.db.View(func(tx *bolt.Tx) error {
-		for _, bucketName := range [][]byte{unprocessedEventsBucket, processedEventsBucket} {
-			bucket := tx.Bucket(bucketName)
-			if bucket == nil {
-				continue
+		index := tx.Bucket(eventIDsByBlockNumberBucket)
+		if index == nil {
+			return fmt.Errorf("event IDs by block number bucket not found")
+		}
+
+		data := index.Get(encodeUint64(blockNumber))
+		if data == nil {
+			return nil
+		}
+
+		eventIDs, err := decodeEventIDs(data)
+		if err != nil {
+			return fmt.Errorf("corrupt event index for block %d: %w", blockNumber, err)
+		}
+
+		unprocessed := tx.Bucket(unprocessedEventsBucket)
+		processed := tx.Bucket(processedEventsBucket)
+
+		results = make([]EventRecord, 0, len(eventIDs))
+
+		for _, eventID := range eventIDs {
+			key := encodeUint64(eventID)
+
+			var raw []byte
+
+			if unprocessed != nil {
+				raw = unprocessed.Get(key)
 			}
 
-			cursor := bucket.Cursor()
-
-			for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
-				var record EventRecord
-				if err := json.Unmarshal(v, &record); err != nil {
-					return fmt.Errorf("failed to unmarshal event record: %w", err)
-				}
-
-				if record.BlockNumber == blockNumber {
-					results = append(results, record)
-				}
+			if raw == nil && processed != nil {
+				raw = processed.Get(key)
 			}
+
+			if raw == nil {
+				return fmt.Errorf("event %d indexed under block %d is missing", eventID, blockNumber)
+			}
+
+			var record EventRecord
+
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return fmt.Errorf("failed to unmarshal event record %d: %w", eventID, err)
+			}
+
+			results = append(results, record)
 		}
 
 		return nil
@@ -748,53 +736,6 @@ func storeTxQueueTail(bucket *bolt.Bucket, tail uint64) error {
 	return bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail))
 }
 
-// migrateLegacyTxQueueList converts the old single-key JSON list into index-keyed entries.
-func (b *BoltStorageHandler) migrateLegacyTxQueueList(bucket *bolt.Bucket) error {
-	if bucket.Get(unprocessedTxQueueHeadKey) != nil || bucket.Get(unprocessedTxQueueTailKey) != nil {
-		return nil
-	}
-
-	data := bucket.Get(unprocessedTxSignaturesListKey)
-	if data == nil {
-		return nil
-	}
-
-	var sigStrings []string
-	if err := json.Unmarshal(data, &sigStrings); err != nil {
-		return fmt.Errorf("cannot unmarshal legacy unprocessed tx signatures: %w", err)
-	}
-
-	var tail uint64
-
-	for i, s := range sigStrings {
-		sig, err := solana.SignatureFromBase58(s)
-		if err != nil {
-			return fmt.Errorf("invalid legacy tx signature at index %d: %w", i, err)
-		}
-
-		// the legacy list carried no slot, so migrated entries keep slot 0
-		if err := bucket.Put(encodeUint64(tail), encodeTxPoint(TxPoint{TxSignature: sig})); err != nil {
-			return fmt.Errorf("cannot migrate legacy tx signature at index %d: %w", i, err)
-		}
-
-		tail++
-	}
-
-	if err := bucket.Delete(unprocessedTxSignaturesListKey); err != nil {
-		return fmt.Errorf("cannot delete legacy unprocessed tx signatures list: %w", err)
-	}
-
-	if tail == 0 {
-		return nil
-	}
-
-	if err := bucket.Put(unprocessedTxQueueTailKey, encodeUint64(tail)); err != nil {
-		return err
-	}
-
-	return bucket.Put(unprocessedTxQueueHeadKey, encodeUint64(0))
-}
-
 // encodeTxPoint serializes a TxPoint as signature bytes followed by the big-endian slot.
 func encodeTxPoint(txPoint TxPoint) []byte {
 	data := make([]byte, 0, len(txPoint.TxSignature)+8)
@@ -842,10 +783,6 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txPoints []TxPoint) err
 			return err
 		}
 
-		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
-			return err
-		}
-
 		bounds, err := loadTxQueueBounds(bucket)
 		if err != nil {
 			return err
@@ -863,9 +800,9 @@ func (b *BoltStorageHandler) PushUnprocessedTransactions(txPoints []TxPoint) err
 	})
 }
 
-// removeProcessedTransactionInBucket pops txSignature off the front of the queue and
+// removeTransactionInBucket pops txSignature off the front of the queue and
 // returns the removed entry, including the slot recorded when it was pushed.
-func removeProcessedTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) (TxPoint, error) {
+func removeTransactionInBucket(bucket *bolt.Bucket, txSignature solana.Signature) (TxPoint, error) {
 	bounds, err := loadTxQueueBounds(bucket)
 	if err != nil {
 		return TxPoint{}, err
@@ -900,39 +837,7 @@ func setLastProcessedTransactionInBucket(bucket *bolt.Bucket, txPoint TxPoint) e
 	return bucket.Put(lastProcessedTxSignatureKey, encodeTxPoint(txPoint))
 }
 
-func (b *BoltStorageHandler) RemoveProcessedTransaction(txSignature solana.Signature) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		bucket, err := b.unprocessedTxSignaturesBucket(tx)
-		if err != nil {
-			return err
-		}
-
-		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
-			return err
-		}
-
-		_, err = removeProcessedTransactionInBucket(bucket, txSignature)
-
-		return err
-	})
-}
-
-func (b *BoltStorageHandler) ensureTxQueueMigrated() error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		bucket, err := b.unprocessedTxSignaturesBucket(tx)
-		if err != nil {
-			return err
-		}
-
-		return b.migrateLegacyTxQueueList(bucket)
-	})
-}
-
 func (b *BoltStorageHandler) GetAllUnprocessedTransactions() ([]TxPoint, error) {
-	if err := b.ensureTxQueueMigrated(); err != nil {
-		return nil, err
-	}
-
 	var result []TxPoint
 
 	err := b.db.View(func(tx *bolt.Tx) error {
@@ -990,11 +895,7 @@ func (b *BoltStorageHandler) FinalizeProcessedTransaction(txSignature solana.Sig
 			return err
 		}
 
-		if err := b.migrateLegacyTxQueueList(bucket); err != nil {
-			return err
-		}
-
-		txPoint, err := removeProcessedTransactionInBucket(bucket, txSignature)
+		txPoint, err := removeTransactionInBucket(bucket, txSignature)
 		if err != nil {
 			return err
 		}
