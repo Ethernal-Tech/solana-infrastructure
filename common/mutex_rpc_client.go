@@ -92,7 +92,7 @@ func NewMutexRPCClient(rpcClient *rpc.Client, config *RPCMethodLimitsConfig) *Mu
 			GetTransaction:          10,
 			GetSignaturesForAddress: 10,
 			GetBlocks:               40,
-			GetBlock:                20,
+			GetBlock:                6,
 			GetBlockHeight:          40,
 		}
 	}
