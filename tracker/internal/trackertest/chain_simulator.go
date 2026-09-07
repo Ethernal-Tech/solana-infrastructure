@@ -28,7 +28,7 @@ import (
 
 const (
 	// defaultSlotDuration mirrors mainnet's ~400ms slot time.
-	defaultSlotDuration = 400 * time.Millisecond
+	defaultSlotDuration = 166 * time.Millisecond
 
 	// defaultHistorySlots is how much chain is generated synchronously before the tracker
 	// starts, so the first getSignaturesForAddress query has to skip pre-StartFromSlot

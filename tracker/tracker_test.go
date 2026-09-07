@@ -58,17 +58,17 @@ func TestChainHeadCatchUpWait(t *testing.T) {
 
 	t.Run("enough blocks needs no wait", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(13))
-		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(15))
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(30))
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(33))
 	})
 
 	t.Run("partial batch waits for remaining slots", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, 2400*time.Millisecond, chainHeadCatchUpWait(7))
+		require.Equal(t, 3818*time.Millisecond, chainHeadCatchUpWait(7))
 	})
 
 	t.Run("empty result waits for full target", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, 5200*time.Millisecond, chainHeadCatchUpWait(0))
+		require.Equal(t, 4980*time.Millisecond, chainHeadCatchUpWait(0))
 	})
 }
