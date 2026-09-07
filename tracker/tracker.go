@@ -25,9 +25,9 @@ const (
 
 	// chainHeadTargetBlockCount is the desired number of slots-with-blocks per
 	// refresh when near the chain head. Fewer results trigger a proportional wait.
-	chainHeadTargetBlockCount  = 13
+	chainHeadTargetBlockCount  = 30
 	emptySlotsWithBlocksOffset = chainHeadTargetBlockCount - 3
-	avgBlockTime               = 400 * time.Millisecond
+	avgBlockTime               = 166 * time.Millisecond
 )
 
 // EventNotification represents a notification sent on the chEvent channel.
