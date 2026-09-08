@@ -1,0 +1,56 @@
+---
+name: Devnet RPC Limits
+on: # yamllint disable-line rule:truthy
+  schedule:
+    - cron: '0 8 * * *'
+    - cron: '0 10 * * *'
+      timezone: 'Europe/Belgrade'
+  workflow_dispatch:
+
+concurrency:
+  group: devnet-rpc-limits
+  cancel-in-progress: false
+
+jobs:
+  devnet_rpc_limits:
+    name: Probe devnet RPC limits
+    runs-on: ubuntu-latest
+    # The sweep spends one 10s window and 15s of silence per method, so it takes
+    # about six minutes of wall clock for fourteen methods.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4.1.1
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5.0.0
+        with:
+          go-version: 1.24.1
+      - name: Probe devnet rate limits
+        env:
+          SOLANA_DEVNET_RATE_LIMIT_TEST: '1'
+        run: |
+          set -o pipefail
+          go test ./common/ -run TestDevnetRPCMethodLimits \
+            -count=1 -v -timeout 15m 2>&1 | tee probe.log
+      - name: Report what the node allows
+        if: always()
+        run: |
+          {
+            echo '## Devnet per-method limits'
+            echo
+            echo '```'
+            sed -n '/method  *configured/,/^ *$/p' probe.log
+            echo '```'
+            echo
+            grep -oE '(UNDER|OVER):.*' probe.log | sed 's/^/- /' \
+              || echo 'Every method matches devnetLimitsConfig.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the probe log
+        if: always()
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: devnet-rpc-limits-log
+          path: probe.log
+          retention-days: 30
