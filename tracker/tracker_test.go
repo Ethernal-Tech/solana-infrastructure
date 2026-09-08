@@ -56,19 +56,36 @@ func TestGetSlotsToQueryBlocks(t *testing.T) {
 func TestChainHeadCatchUpWait(t *testing.T) {
 	t.Parallel()
 
+	const (
+		target      = defaultChainHeadTargetBlockCount
+		avgSlotTime = defaultAvgSlotTime
+	)
+
 	t.Run("enough blocks needs no wait", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(30))
-		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(33))
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(30, target, avgSlotTime))
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(33, target, avgSlotTime))
 	})
 
 	t.Run("partial batch waits for remaining slots", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, 3818*time.Millisecond, chainHeadCatchUpWait(7))
+		require.Equal(t, 3818*time.Millisecond, chainHeadCatchUpWait(7, target, avgSlotTime))
 	})
 
 	t.Run("empty result waits for full target", func(t *testing.T) {
 		t.Parallel()
-		require.Equal(t, 4980*time.Millisecond, chainHeadCatchUpWait(0))
+		require.Equal(t, 4980*time.Millisecond, chainHeadCatchUpWait(0, target, avgSlotTime))
+	})
+
+	t.Run("wait scales with the configured slot time", func(t *testing.T) {
+		t.Parallel()
+		// The same shortfall on a chain running twice as fast is half the wait.
+		require.Equal(t, 1909*time.Millisecond, chainHeadCatchUpWait(7, target, avgSlotTime/2))
+	})
+
+	t.Run("wait scales with the configured target", func(t *testing.T) {
+		t.Parallel()
+		require.Equal(t, 1660*time.Millisecond, chainHeadCatchUpWait(0, 10, avgSlotTime))
+		require.Equal(t, time.Duration(0), chainHeadCatchUpWait(10, 10, avgSlotTime))
 	})
 }

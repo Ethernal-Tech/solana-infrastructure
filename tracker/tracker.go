@@ -23,11 +23,23 @@ import (
 const (
 	getSignaturesForAddressMaxLimit = 1000
 
-	// chainHeadTargetBlockCount is the desired number of slots-with-blocks per
-	// refresh when near the chain head. Fewer results trigger a proportional wait.
-	chainHeadTargetBlockCount  = 30
-	emptySlotsWithBlocksOffset = chainHeadTargetBlockCount - 3
-	avgBlockTime               = 166 * time.Millisecond
+	// defaultAvgSlotTime is the network's average slot time. It converts a shortfall of
+	// blocks into how long to wait for the chain to make more, so it has to track the
+	// real slot time: too high and the refresher idles through slots it should have read.
+	defaultAvgSlotTime = 166 * time.Millisecond
+
+	// defaultChainHeadTargetBlockCount is the desired number of slots-with-blocks per
+	// refresh when near the chain head. Fewer results trigger a proportional wait, so
+	// this also sets the lag the head settles at: roughly this many slots behind the tip.
+	defaultChainHeadTargetBlockCount = 30
+
+	// defaultChainHeadSlotOffset is the width of the slot window GetBlocks is asked for.
+	// It bounds the target: a target wider than the window can never be met.
+	defaultChainHeadSlotOffset = 80
+
+	// emptySlotsWithBlocksBackoff is how far short of the target a forced advance stops,
+	// so stepping over an outage does not overshoot the chain head.
+	emptySlotsWithBlocksBackoff = 3
 )
 
 // EventNotification represents a notification sent on the chEvent channel.
@@ -70,8 +82,23 @@ type EventTrackerConfig struct {
 	RetryTimeout           time.Duration
 	StartFromSlot          uint64
 	BlockRoundingThreshold uint64
-	EventSubscriber        EventSubscriber
-	DisableRateLimiting    bool
+
+	// AvgSlotTime is the network's average slot time. Zero means defaultAvgSlotTime.
+	// Set it to what the chain is actually doing: the refresher waits this long per
+	// missing block, so a value above the truth makes it idle while the chain runs on.
+	AvgSlotTime time.Duration
+
+	// ChainHeadTargetBlockCount is how many slots-with-blocks a refresh near the chain
+	// head aims to see before it stops waiting. Zero means defaultChainHeadTargetBlockCount.
+	// It sets the head lag (about this many slots) and must fit inside ChainHeadSlotOffset.
+	ChainHeadTargetBlockCount uint64
+
+	// ChainHeadSlotOffset is the width of the slot window GetBlocks is asked for.
+	// Zero means defaultChainHeadSlotOffset. Must be at least ChainHeadTargetBlockCount.
+	ChainHeadSlotOffset uint64
+
+	EventSubscriber     EventSubscriber
+	DisableRateLimiting bool
 }
 
 type LatestGetBlocksState struct {
@@ -80,18 +107,20 @@ type LatestGetBlocksState struct {
 }
 
 type EventTracker struct {
-	client                 *common.MutexRPCClient
-	storage                store.StorageHandler
-	trackedPrograms        map[solana.PublicKey]ProgramEventSpecs
-	commitment             rpc.CommitmentType
-	logger                 hclog.Logger
-	pollTime               time.Duration
-	startFromSlot          uint64
-	chainHeadSlot          uint64
-	chainHeadSlotOffset    uint64
-	blockRoundingThreshold uint64
-	EventSubscriber        EventSubscriber
-	latestGetBlocksState   LatestGetBlocksState
+	client                    *common.MutexRPCClient
+	storage                   store.StorageHandler
+	trackedPrograms           map[solana.PublicKey]ProgramEventSpecs
+	commitment                rpc.CommitmentType
+	logger                    hclog.Logger
+	pollTime                  time.Duration
+	startFromSlot             uint64
+	chainHeadSlot             uint64
+	chainHeadSlotOffset       uint64
+	chainHeadTargetBlockCount uint64
+	avgSlotTime               time.Duration
+	blockRoundingThreshold    uint64
+	EventSubscriber           EventSubscriber
+	latestGetBlocksState      LatestGetBlocksState
 }
 
 func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (*EventTracker, error) {
@@ -142,18 +171,52 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		blockRoundingThreshold = 10
 	}
 
+	avgSlotTime := config.AvgSlotTime
+	if avgSlotTime == 0 {
+		avgSlotTime = defaultAvgSlotTime
+	}
+
+	if avgSlotTime < 0 {
+		return nil, fmt.Errorf("avg slot time cannot be negative, got %s", avgSlotTime)
+	}
+
+	chainHeadSlotOffset := config.ChainHeadSlotOffset
+	if chainHeadSlotOffset == 0 {
+		chainHeadSlotOffset = defaultChainHeadSlotOffset
+	}
+
+	chainHeadTargetBlockCount := config.ChainHeadTargetBlockCount
+	if chainHeadTargetBlockCount == 0 {
+		chainHeadTargetBlockCount = defaultChainHeadTargetBlockCount
+	}
+
+	// A target at or below the backoff would underflow the forced advance, and one wider
+	// than the window can never be met, so the refresher would wait on every single pass.
+	if chainHeadTargetBlockCount <= emptySlotsWithBlocksBackoff {
+		return nil, fmt.Errorf("chain head target block count must be greater than %d, got %d",
+			emptySlotsWithBlocksBackoff, chainHeadTargetBlockCount)
+	}
+
+	if chainHeadTargetBlockCount > chainHeadSlotOffset {
+		return nil, fmt.Errorf(
+			"chain head target block count %d exceeds chain head slot offset %d, so it can never be met",
+			chainHeadTargetBlockCount, chainHeadSlotOffset)
+	}
+
 	t := &EventTracker{
-		client:                 common.NewMutexRPCClient(config.Client, config.RPCMethodLimitsConfig),
-		storage:                storage,
-		trackedPrograms:        trackedPrograms,
-		commitment:             commitment,
-		logger:                 config.Logger,
-		pollTime:               pollTime,
-		chainHeadSlot:          config.StartFromSlot,
-		startFromSlot:          config.StartFromSlot,
-		chainHeadSlotOffset:    50,
-		blockRoundingThreshold: blockRoundingThreshold,
-		EventSubscriber:        config.EventSubscriber,
+		client:                    common.NewMutexRPCClient(config.Client, config.RPCMethodLimitsConfig),
+		storage:                   storage,
+		trackedPrograms:           trackedPrograms,
+		commitment:                commitment,
+		logger:                    config.Logger,
+		pollTime:                  pollTime,
+		chainHeadSlot:             config.StartFromSlot,
+		startFromSlot:             config.StartFromSlot,
+		chainHeadSlotOffset:       chainHeadSlotOffset,
+		chainHeadTargetBlockCount: chainHeadTargetBlockCount,
+		avgSlotTime:               avgSlotTime,
+		blockRoundingThreshold:    blockRoundingThreshold,
+		EventSubscriber:           config.EventSubscriber,
 		latestGetBlocksState: LatestGetBlocksState{
 			chainHeadSlot:             config.StartFromSlot,
 			queriedBlocksWithSlotsLen: 0,
@@ -820,22 +883,23 @@ func getSlotsToQueryBlocks(slotsWithBlocks []uint64, threshold uint64) []uint64 
 }
 
 // chainHeadCatchUpWait returns how long to wait before the next refresh when
-// GetBlocks returned fewer slots-with-blocks than the target batch size.
-func chainHeadCatchUpWait(blocksWithSlots int) time.Duration {
-	if blocksWithSlots >= chainHeadTargetBlockCount {
+// GetBlocks returned fewer slots-with-blocks than the target batch size, which is
+// how long the chain needs to produce the ones that are missing.
+func chainHeadCatchUpWait(blocksWithSlots int, target uint64, avgSlotTime time.Duration) time.Duration {
+	if blocksWithSlots < 0 || uint64(blocksWithSlots) >= target {
 		return 0
 	}
 
-	slotsNeeded := chainHeadTargetBlockCount - blocksWithSlots
+	slotsNeeded := target - uint64(blocksWithSlots)
 
-	return time.Duration(slotsNeeded) * avgBlockTime
+	return time.Duration(float64(slotsNeeded) * float64(avgSlotTime))
 }
 
 // refreshChainHead fetches the block at the given slot and persists it as the
 // latest block point. If the slot has no block (skipped/empty), the update is
 // silently skipped and the previously stored chain head remains valid.
 // Only storage write errors are returned; RPC/fetch failures are non-fatal.
-// When GetBlocks returns fewer than chainHeadTargetBlockCount slots, the
+// When GetBlocks returns fewer than the configured target of slots, the
 // returned idleWait backs off proportionally so we do not poll in a tight loop
 // near the chain head.
 func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Duration, err error) {
@@ -866,7 +930,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 	t.latestGetBlocksState = state
 
 	if len(slotsWithBlocks) == 0 {
-		return chainHeadCatchUpWait(0), nil
+		return chainHeadCatchUpWait(0, t.chainHeadTargetBlockCount, t.avgSlotTime), nil
 	}
 
 	var bp store.BlockPoint
@@ -928,10 +992,11 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 	}
 
 	if bp.BlockSlot > 0 {
-		return chainHeadCatchUpWait(len(slotsWithBlocks)), t.storage.StoreLatestBlockPoint(nil, bp)
+		return chainHeadCatchUpWait(len(slotsWithBlocks), t.chainHeadTargetBlockCount, t.avgSlotTime),
+			t.storage.StoreLatestBlockPoint(nil, bp)
 	}
 
-	return chainHeadCatchUpWait(len(slotsWithBlocks)), nil
+	return chainHeadCatchUpWait(len(slotsWithBlocks), t.chainHeadTargetBlockCount, t.avgSlotTime), nil
 }
 
 // unstickChainHead force-advances the chain head when two consecutive GetBlocks
@@ -944,7 +1009,7 @@ func (t *EventTracker) unstickChainHead(
 	slotsWithBlocks []uint64,
 ) (idleWait time.Duration, err error) {
 	// In case of the outage we advance with this
-	newChainHeadSlot := t.chainHeadSlot + emptySlotsWithBlocksOffset
+	newChainHeadSlot := t.chainHeadSlot + t.chainHeadTargetBlockCount - emptySlotsWithBlocksBackoff
 
 	if len(slotsWithBlocks) > 1 {
 		// resume from the last slot we know has a block

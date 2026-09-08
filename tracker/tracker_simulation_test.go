@@ -53,15 +53,24 @@ const (
 	// outageGapSlots is the length of the empty run the outage test injects. It has to
 	// exceed chainHeadWindowSlots, so that a whole getBlocks query lands inside the gap and
 	// comes back with nothing for the chain head to advance to.
-	outageGapSlots = 70
+	outageGapSlots = chainHeadWindowSlots + 30
 
 	// The sparse stretch scripted by the outage test. It starts sparseRegionStartOffset slots
 	// into the chain, covers sparseRegionSlots slots, and holds sparseRegionBlockCount blocks,
-	// all bunched at its start. The empty part is shorter than chainHeadWindowSlots, so every
-	// query still comes back with blocks in it.
+	// all bunched at its start. The stretch is as wide as the queried window, so a window
+	// opened on the last block in it still cannot see the chain resume, and the empty part of
+	// it is shorter than the window, so every query still comes back with blocks in it.
 	sparseRegionStartOffset = 100
-	sparseRegionSlots       = 50
+	sparseRegionSlots       = chainHeadWindowSlots
 	sparseRegionBlockCount  = 5
+
+	// sparseRegionThresholdBlocks is how many blocks the other shape of the stretch holds, the
+	// one that lands them on the slots the tracker rounds to: one per rounding threshold.
+	sparseRegionThresholdBlocks = sparseRegionSlots / defaultBlockRoundingThreshold
+
+	// sparseRegionTailSlots is how much chain follows the stretch before the tracker starts, so
+	// the whole stretch is already history by the time the tracker meets it.
+	sparseRegionTailSlots = 50
 
 	// outageSettleSlots is how far past the outage the chain must get before the tracker is
 	// expected to have anything on the other side to find.
@@ -75,7 +84,7 @@ const (
 	outageTimeout   = time.Minute
 
 	// maxForceAdvances is how many force advances crossing the outage may reasonably take:
-	// one per emptySlotsWithBlocksOffset slots of gap, with room to spare.
+	// one per forced step over it, with room to spare.
 	maxForceAdvances = 30
 
 	// The forgotten-cursor test needs the program to go quiet long enough that the query
@@ -116,10 +125,13 @@ const (
 	// delivered, which is what turns these tests into stall detectors.
 	deliveryLagAllowance = 15 * time.Second
 
-	// chainHeadWindowSlots is the size of the slot window the tracker asks getBlocks for,
-	// and chainHeadWindowSlack is how many calls per window a healthy refresher is allowed
-	// before the count counts as spinning.
-	chainHeadWindowSlots = 50
+	// chainHeadWindowSlots is the size of the slot window the tracker asks getBlocks for. It
+	// has to match the tracker's chain head slot offset, because the histories scripted below
+	// are shaped against it: what stalls a chain head is a stretch the window cannot see out
+	// of, so widening the window without widening those stretches stops them stalling anything.
+	// chainHeadWindowSlack is how many calls per window a healthy refresher is allowed before
+	// the count counts as spinning.
+	chainHeadWindowSlots = 80
 	chainHeadWindowSlack = 10
 
 	// defaultBlockRoundingThreshold is the BlockRoundingThreshold the runs configure, i.e. the
@@ -395,7 +407,7 @@ func TestEventTracker_UnsticksChainHeadAfterOutage(t *testing.T) {
 	sim.ProduceEmptySlots(sparseRegionSlots - 7)
 
 	// Full slots again, so by the time the tracker starts the chain is well past the stretch.
-	sim.ProduceSlotsWithBlocks(sparseRegionStartOffset - sparseRegionSlots)
+	sim.ProduceSlotsWithBlocks(sparseRegionTailSlots)
 
 	sparseRegionStart := genesis + sparseRegionStartOffset
 	sparseRegionEnd := sparseRegionStart + sparseRegionSlots
@@ -803,10 +815,11 @@ func TestEventTracker_StoresBlockhashesForSparseSlots(t *testing.T) {
 	// A block in every slot up to the sparse stretch.
 	sim.ProduceSlotsWithBlocks(sparseRegionStartOffset)
 
-	// Then one block per threshold and nothing in between: +110, +120, +130, +140, +150.
-	thresholdSlots := make([]uint64, 0, sparseRegionSlots/defaultBlockRoundingThreshold)
+	// Then one block per threshold and nothing in between: +110, +120, and so on to the end of
+	// the stretch.
+	thresholdSlots := make([]uint64, 0, sparseRegionThresholdBlocks)
 
-	for i := uint64(0); i < sparseRegionSlots/defaultBlockRoundingThreshold; i++ {
+	for i := uint64(0); i < sparseRegionThresholdBlocks; i++ {
 		sim.ProduceEmptySlots(defaultBlockRoundingThreshold - 1)
 		sim.ProduceSlotsWithBlocks(1)
 
@@ -814,9 +827,9 @@ func TestEventTracker_StoresBlockhashesForSparseSlots(t *testing.T) {
 	}
 
 	// Almost every slot again after the stretch.
-	sim.ProduceSlots(sparseRegionStartOffset - sparseRegionSlots)
+	sim.ProduceSlots(sparseRegionTailSlots)
 
-	require.Len(t, thresholdSlots, sparseRegionBlockCount)
+	require.Len(t, thresholdSlots, sparseRegionThresholdBlocks)
 
 	for _, slot := range thresholdSlots {
 		require.Zero(t, slot%defaultBlockRoundingThreshold,
