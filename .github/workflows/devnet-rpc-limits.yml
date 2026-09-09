@@ -2,7 +2,6 @@
 name: Devnet RPC Limits
 on: # yamllint disable-line rule:truthy
   schedule:
-    - cron: '0 8 * * *'
     - cron: '0 10 * * *'
       timezone: 'Europe/Belgrade'
   workflow_dispatch:
