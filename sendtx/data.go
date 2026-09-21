@@ -18,6 +18,23 @@ const MaxBridgeTransactionReceivers = 3
 // bridge transactions at MaxBridgeTransactionReceivers (Solana default is 200k we 2x that).
 const BridgeTransactionMaxReceiversComputeUnitLimit uint32 = 400_000
 
+// DefaultComputeUnitLimitPerInstruction and MaxComputeUnitLimit are the
+// runtime's implicit compute budget: an instruction is granted the former and a
+// transaction is capped at the latter. v1 transactions have to request the
+// limit explicitly, because an unset limit there means 0 compute units.
+const (
+	DefaultComputeUnitLimitPerInstruction uint32 = 200_000
+	MaxComputeUnitLimit                   uint32 = 1_400_000
+)
+
+// MaxLoadedAccountsDataSizeBytes is the loaded accounts data size a transaction
+// that requests none is granted implicitly, and also the largest value that can
+// be requested. It carries over to v1 for the same reason the compute unit
+// limit does: an unset limit in a v1 config means 0 bytes, which every
+// transaction exceeds as soon as it loads its first account
+// (MaxLoadedAccountsDataSizeExceeded).
+const MaxLoadedAccountsDataSizeBytes uint32 = 64 * 1024 * 1024
+
 type ChainConfig struct {
 	MinAmountToBridge     uint64
 	MinFeeForBridging     uint64

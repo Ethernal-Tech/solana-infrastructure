@@ -44,10 +44,15 @@ func NewTxSender(txProvider wallet.ITxProvider, chainConfig *ChainConfig) *TxSen
 // If a signature is required, it can be added explicitly by calling tx.Sign(...)
 // after the transaction has been created.
 //
-// Additional behavior can be configured via CreateTxOption values. In
-// particular, WithAddressLookupTables enables Address Lookup Tables for
-// instructions that reference many accounts (e.g. bridge_transaction),
-// producing a v0 transaction that fits within the 1232-byte size limit.
+// bridge_transaction (batch) messages are built as v1 (SIMD-0385), which
+// raises the transaction size limit from 1232 to 4096 bytes and so fits more
+// bridgings per batch. v1 carries the compute budget in the message header, so
+// ComputeBudget instructions are folded into that header instead of taking up
+// an instruction slot.
+//
+// Additional behavior can be configured via CreateTxOption values.
+// WithAddressLookupTables enables Address Lookup Tables, which exist only in
+// v0: passing it keeps the transaction on v0 and its 1232-byte limit.
 func (txSnd *TxSender) CreateTx(
 	ctx context.Context,
 	solanaPublicKey solana.PublicKey,
@@ -63,14 +68,31 @@ func (txSnd *TxSender) CreateTx(
 		return nil, fmt.Errorf("failed to prepare bridging request instruction: %w", err)
 	}
 
+	txOpts := make([]solana.TransactionOption, 0, 1)
+
+	switch {
+	case len(cfg.addressTables) > 0:
+		// v1 dropped address lookup tables, so an ALT keeps the transaction on v0.
+		txOpts = append(txOpts, solana.TransactionAddressTables(cfg.addressTables))
+	case usesV1Message(instructionType):
+		var v1Config solana.TransactionConfig
+
+		instructions, v1Config, err = inlineComputeBudget(instructions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to inline compute budget for %s: %w", instructionType, err)
+		}
+
+		txOpts = append(txOpts, solana.TransactionV1Config(v1Config))
+	}
+
 	builder := solana.NewTransactionBuilder().SetRecentBlockHash(recentBlockHash).SetFeePayer(solanaPublicKey)
 
 	for _, instruction := range instructions {
 		builder = builder.AddInstruction(instruction)
 	}
 
-	if len(cfg.addressTables) > 0 {
-		builder = builder.WithOpt(solana.TransactionAddressTables(cfg.addressTables))
+	for _, txOpt := range txOpts {
+		builder = builder.WithOpt(txOpt)
 	}
 
 	tx, err := builder.Build()
@@ -82,10 +104,87 @@ func (txSnd *TxSender) CreateTx(
 	// but make the requirement explicit here in case that behavior ever
 	// changes: legacy messages cannot carry AddressTableLookups.
 	if len(cfg.addressTables) > 0 {
-		tx.Message.SetVersion(solana.MessageVersionV0)
+		if _, err := tx.Message.SetVersion(solana.MessageVersionV0); err != nil {
+			return nil, fmt.Errorf("failed to set v0 message version: %w", err)
+		}
 	}
 
 	return tx, nil
+}
+
+// usesV1Message reports whether an instruction type is serialized as a v1
+// (SIMD-0385) message. Batches are the only such type: they are the
+// transactions that run out of room first, and v1 is what raises the size
+// limit from 1232 to 4096 bytes.
+func usesV1Message(instructionType InstructionType) bool {
+	return instructionType == InstructionTypeBridgeTransaction
+}
+
+// inlineComputeBudget moves ComputeBudget instructions into a v1 transaction
+// config and returns the instructions that remain. v1 carries the compute
+// budget in the message header and executes ComputeBudget instructions as
+// no-ops, so leaving one in place would silently drop the request while still
+// burning compute units and an instruction slot.
+func inlineComputeBudget(
+	instructions []solana.Instruction,
+) ([]solana.Instruction, solana.TransactionConfig, error) {
+	var config solana.TransactionConfig
+
+	remaining := make([]solana.Instruction, 0, len(instructions))
+
+	for _, instruction := range instructions {
+		if !instruction.ProgramID().Equals(solana.ComputeBudget) {
+			remaining = append(remaining, instruction)
+
+			continue
+		}
+
+		data, err := instruction.Data()
+		if err != nil {
+			return nil, config, fmt.Errorf("failed to get compute budget instruction data: %w", err)
+		}
+
+		decoded, err := computebudget.DecodeInstruction(instruction.Accounts(), data)
+		if err != nil {
+			return nil, config, fmt.Errorf("failed to decode compute budget instruction: %w", err)
+		}
+
+		switch impl := decoded.Impl.(type) {
+		case *computebudget.SetComputeUnitLimit:
+			config = config.WithComputeUnitLimit(impl.Units)
+		case *computebudget.SetLoadedAccountsDataSizeLimit:
+			config = config.WithLoadedAccountsDataSizeLimit(impl.Bytes)
+		default:
+			// SetComputeUnitPrice is micro-lamports per compute unit while the
+			// v1 config is a total in lamports; converting here would silently
+			// reprice the transaction, so make the caller state the fee.
+			return nil, config, fmt.Errorf(
+				"compute budget instruction %T cannot be converted to a v1 transaction config", impl)
+		}
+	}
+
+	if config.ComputeUnitLimit == nil {
+		config = config.WithComputeUnitLimit(defaultComputeUnitLimit(len(remaining)))
+	}
+
+	if config.LoadedAccountsDataSizeLimit == nil {
+		config = config.WithLoadedAccountsDataSizeLimit(MaxLoadedAccountsDataSizeBytes)
+	}
+
+	return remaining, config, nil
+}
+
+// defaultComputeUnitLimit returns the compute unit limit the runtime grants a
+// transaction that requests none: DefaultComputeUnitLimitPerInstruction per
+// instruction, capped at MaxComputeUnitLimit.
+func defaultComputeUnitLimit(instructionCount int) uint32 {
+	maxInstructions := int(MaxComputeUnitLimit / DefaultComputeUnitLimitPerInstruction)
+	if instructionCount >= maxInstructions {
+		return MaxComputeUnitLimit
+	}
+
+	//nolint:gosec // instructionCount is positive and below maxInstructions.
+	return DefaultComputeUnitLimitPerInstruction * uint32(instructionCount)
 }
 
 func (txSnd *TxSender) SendTx(
