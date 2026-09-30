@@ -376,7 +376,7 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 
 	transactionResponse, err := t.client.GetTransaction(ctx, txSignature, &rpc.GetTransactionOpts{
 		Commitment:                     t.commitment,
-		MaxSupportedTransactionVersion: new(uint64),
+		MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
 	})
 	if err != nil {
 		return err
@@ -482,7 +482,7 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 			block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
 				result, err := t.client.GetBlockWithOpts(ctx, transactionResponse.Slot, &rpc.GetBlockOpts{
 					TransactionDetails:             rpc.TransactionDetailsNone,
-					MaxSupportedTransactionVersion: new(uint64),
+					MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
 					Commitment:                     t.commitment,
 				})
 				if err != nil {
@@ -947,7 +947,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 		block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
 			result, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
 				TransactionDetails:             rpc.TransactionDetailsNone,
-				MaxSupportedTransactionVersion: new(uint64),
+				MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
 				Commitment:                     rpc.CommitmentConfirmed,
 			})
 			if err != nil {

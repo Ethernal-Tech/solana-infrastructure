@@ -164,7 +164,8 @@ func (p *Provider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResu
 		ctx,
 		slot,
 		&rpc.GetBlockOpts{
-			Commitment: rpc.CommitmentConfirmed,
+			Commitment:                     rpc.CommitmentConfirmed,
+			MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
 		},
 	)
 }
@@ -197,7 +198,8 @@ func (p *Provider) GetTransaction(
 		ctx,
 		sig,
 		&rpc.GetTransactionOpts{
-			Commitment: rpc.CommitmentConfirmed,
+			Commitment:                     rpc.CommitmentConfirmed,
+			MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
 		},
 	)
 }
