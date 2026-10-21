@@ -269,7 +269,7 @@ func (s *ChainSimulator) handleGetTransaction(request jsonRPCRequest) (any, erro
 			"fee":               5000,
 			"preBalances":       []uint64{1_000_000_000, 0},
 			"postBalances":      []uint64{999_995_000, 0},
-			"innerInstructions": []any{},
+			"innerInstructions": tx.innerInstructions,
 			"logMessages":       tx.logs,
 		},
 		// base64 encoding, the same shape the validator returns for encoding=base64.

@@ -3,11 +3,9 @@ package tracker
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +13,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/common"
+	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
 	"github.com/Ethernal-Tech/solana-infrastructure/tracker/store"
 	binary "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
@@ -107,9 +106,11 @@ type LatestGetBlocksState struct {
 }
 
 type EventTracker struct {
-	client                    *common.MutexRPCClient
-	storage                   store.StorageHandler
-	trackedPrograms           map[solana.PublicKey]ProgramEventSpecs
+	client          *common.MutexRPCClient
+	storage         store.StorageHandler
+	trackedPrograms map[solana.PublicKey]ProgramEventSpecs
+	// eventAuthorities holds the emit_cpi! event authority PDA of every tracked program.
+	eventAuthorities          map[solana.PublicKey]solana.PublicKey
 	commitment                rpc.CommitmentType
 	logger                    hclog.Logger
 	pollTime                  time.Duration
@@ -141,6 +142,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 	}
 
 	trackedPrograms := make(map[solana.PublicKey]ProgramEventSpecs, len(config.TrackedPrograms))
+	eventAuthorities := make(map[solana.PublicKey]solana.PublicKey, len(config.TrackedPrograms))
 
 	for programIDstr, eventSpecs := range config.TrackedPrograms {
 		programID, err := solana.PublicKeyFromBase58(programIDstr)
@@ -148,7 +150,13 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 			return nil, fmt.Errorf("invalid program ID %s: %w", programIDstr, err)
 		}
 
+		eventAuthority, err := deriveEventAuthority(programID)
+		if err != nil {
+			return nil, err
+		}
+
 		trackedPrograms[programID] = eventSpecs
+		eventAuthorities[programID] = eventAuthority
 	}
 
 	// Set up RPC client if not provided externally
@@ -207,6 +215,7 @@ func NewEventTracker(config *EventTrackerConfig, storage store.StorageHandler) (
 		client:                    common.NewMutexRPCClient(config.Client, config.RPCMethodLimitsConfig),
 		storage:                   storage,
 		trackedPrograms:           trackedPrograms,
+		eventAuthorities:          eventAuthorities,
 		commitment:                commitment,
 		logger:                    config.Logger,
 		pollTime:                  pollTime,
@@ -390,8 +399,15 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 		return fmt.Errorf("cannot read meta data for the transaction")
 	}
 
-	if len(transactionResponse.Meta.LogMessages) == 0 {
-		t.logger.Warn("No log messages found for the transaction")
+	// A failed transaction is reverted on chain, but its logs still contain
+	// the events emitted before the failure, so they must not be processed
+	if transactionResponse.Meta.Err != nil {
+		t.logger.Warn("Skipping failed transaction",
+			"tx signature", txSignature.String(), "err", transactionResponse.Meta.Err)
+
+		if err := t.storage.FinalizeProcessedTransaction(txSignature); err != nil {
+			return fmt.Errorf("failed to finalize processed transaction: %w", err)
+		}
 
 		return nil
 	}
@@ -401,145 +417,137 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 		return fmt.Errorf("failed to get transaction: %w", err)
 	}
 
-	// Processing loop:
-	for _, instruction := range transaction.Message.Instructions {
-		if int(instruction.ProgramIDIndex) >= len(transaction.Message.AccountKeys) {
-			t.logger.Warn(fmt.Sprintf("Invalid ProgramIDIndex in transaction %d (only %d accounts)",
-				instruction.ProgramIDIndex, len(transaction.Message.AccountKeys)))
+	// Events are read from the inner instructions only. The RPC returns innerInstructions as null only for
+	// a transaction processed while inner-instruction recording was disabled, so its events cannot be read.
+	// Its metadata never changes, so retrying would stall the tracker for good: it is reported and finalized.
+	if transactionResponse.Meta.InnerInstructions == nil {
+		t.logger.Error("Skipping transaction without inner instruction metadata, its events cannot be read",
+			"tx signature", txSignature.String())
+
+		if err := t.storage.FinalizeProcessedTransaction(txSignature); err != nil {
+			return fmt.Errorf("failed to finalize processed transaction: %w", err)
+		}
+
+		return nil
+	}
+
+	// Every account key the instructions can index, including addresses loaded from lookup tables.
+	accountKeys := transactionAccountKeys(transaction.Message.AccountKeys, transactionResponse.Meta.LoadedAddresses)
+
+	// Processing loop. A transaction carries no events at all when none of its instructions emitted
+	// one; it is then simply finalized below, so it can never stall the tracker.
+	for _, emitted := range t.collectTransactionEvents(transactionResponse.Meta, accountKeys) {
+		programID := emitted.programID
+
+		parsed, name, err := t.parseEvent(emitted.data, programID)
+		if err != nil {
+			t.logger.Warn(fmt.Sprintf("Failed to parse event: %s", err.Error()))
 
 			continue
 		}
 
-		programID := transaction.Message.AccountKeys[instruction.ProgramIDIndex]
+		if parsed == nil {
+			continue
+		}
 
 		var innerActionHash [32]byte
 
-		for _, log := range transactionResponse.Meta.LogMessages {
-			if !strings.Contains(log, "Program data: ") {
-				continue
-			}
-
-			// Extract base64 data
-			dataStart := strings.Index(log, "Program data: ")
-			if dataStart == -1 {
-				continue
-			}
-
-			base64Data := log[dataStart+14:] // len("Program data: ") = 14
-			base64Data = strings.TrimSpace(base64Data)
-			base64Data = strings.TrimRight(base64Data, "=") // Remove padding for RawStdEncoding
-
-			decoded, err := base64.RawStdEncoding.DecodeString(base64Data)
-			if err != nil {
-				return fmt.Errorf("failed to decode log: %w", err)
-			}
-
-			parsed, name, err := t.parseEvent(decoded, programID)
-			if err != nil {
-				t.logger.Warn(fmt.Sprintf("Failed to parse event: %s", err.Error()))
+		// We have to recreate the payload to get the inner action hash
+		// that is the only way to map the payload hash from smart contract that oracle is expecting
+		// to the batch that was actually executed by relayer within this tx
+		if name == "TransactionExecutedEvent" {
+			executedEvent, ok := parsed.(*skyline_program.TransactionExecutedEvent)
+			if !ok {
+				t.logger.Warn(fmt.Sprintf("TransactionExecutedEvent has an unexpected payload type %T", parsed))
 
 				continue
 			}
 
-			if parsed == nil {
-				continue
-			}
-
-			// We have to recreate the payload to get the inner action hash
-			// that is the only way to map the payload hash from smart contract that oracle is expecting
-			// to the batch that was actually executed by relayer within this tx
-			if name == "TransactionExecutedEvent" {
-				ed25519Data, err := FindEd25519InstructionData(
-					transaction.Message.Instructions,
-					transaction.Message.AccountKeys,
-				)
-				if err != nil {
-					t.logger.Warn(fmt.Sprintf(
-						"TransactionExecutedEvent in tx but no ed25519 instruction: %s",
-						err.Error()))
-
-					continue
-				}
-
-				payload, err := ExtractSolanaPayloadFromEd25519(ed25519Data)
-				if err != nil {
-					t.logger.Warn(fmt.Sprintf(
-						"Failed to extract solana payload from ed25519 instruction: %s", err.Error()))
-
-					continue
-				}
-
-				payloadBytes, err := payload.Marshal()
-				if err != nil {
-					t.logger.Warn(fmt.Sprintf("Failed to marshal payload: %s", err.Error()))
-
-					continue
-				}
-
-				innerActionHash = sha256.Sum256(payloadBytes)
-			}
-
-			block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
-				result, err := t.client.GetBlockWithOpts(ctx, transactionResponse.Slot, &rpc.GetBlockOpts{
-					TransactionDetails:             rpc.TransactionDetailsNone,
-					MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
-					Commitment:                     t.commitment,
-				})
-				if err != nil {
-					return nil, ErrRetryTryAgain
-				}
-
-				return result, nil
-			}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
-			if err != nil {
-				return fmt.Errorf("failed to get block for event at slot %d: %w", transactionResponse.Slot, err)
-			}
-
-			if block == nil {
-				return fmt.Errorf("no block found at slot %d for transaction %s", transactionResponse.Slot, txSignature.String())
-			}
-
-			if block.BlockHeight != nil {
-				err = t.storage.StoreLatestFinalizedBlockNumber(*block.BlockHeight)
-				if err != nil {
-					return fmt.Errorf("failed to store latest finalized block number for transaction %s: %w",
-						txSignature.String(), err)
-				}
-			} else {
-				return fmt.Errorf("no block height found for block at slot %d for transaction %s",
-					transactionResponse.Slot, txSignature.String())
-			}
-
-			event := EventNotification{
-				SlotNumber:      transactionResponse.Slot,
-				BlockNumber:     *block.BlockHeight,
-				TxSignature:     txSignature,
-				InnerActionHash: innerActionHash,
-				Program:         programID,
-				EventName:       name,
-				EventData:       parsed,
-			}
-
-			err = t.EventSubscriber.AddEvent(event)
-			if err != nil {
-				return fmt.Errorf("failed to add event: %w", err)
-			}
-
-			t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d", name, programID, transactionResponse.Slot))
-
-			err = t.storage.StoreEvent(
-				nil,
-				event.SlotNumber,
-				event.BlockNumber,
-				event.TxSignature,
-				event.Program,
-				event.EventName,
-				event.InnerActionHash,
-				event.EventData,
+			// Use the ed25519 instruction the on-chain program verified for the instruction the event was
+			// emitted under, matched to the event's batch id. Taking any other ed25519 instruction would let
+			// a forged one supply the batch hash.
+			payload, err := findBatchPayloadAtInstruction(
+				transaction.Message.Instructions,
+				accountKeys,
+				emitted.topLevelIndex,
+				executedEvent.BatchId,
 			)
 			if err != nil {
-				return fmt.Errorf("failed to store event: %w", err)
+				t.logger.Warn(fmt.Sprintf("Failed to locate executed batch payload: %s", err.Error()))
+
+				continue
 			}
+
+			payloadBytes, err := payload.Marshal()
+			if err != nil {
+				t.logger.Warn(fmt.Sprintf("Failed to marshal payload: %s", err.Error()))
+
+				continue
+			}
+
+			innerActionHash = sha256.Sum256(payloadBytes)
+		}
+
+		block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
+			result, err := t.client.GetBlockWithOpts(ctx, transactionResponse.Slot, &rpc.GetBlockOpts{
+				TransactionDetails:             rpc.TransactionDetailsNone,
+				MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
+				Commitment:                     t.commitment,
+			})
+			if err != nil {
+				return nil, ErrRetryTryAgain
+			}
+
+			return result, nil
+		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
+		if err != nil {
+			return fmt.Errorf("failed to get block for event at slot %d: %w", transactionResponse.Slot, err)
+		}
+
+		if block == nil {
+			return fmt.Errorf("no block found at slot %d for transaction %s", transactionResponse.Slot, txSignature.String())
+		}
+
+		if block.BlockHeight != nil {
+			err = t.storage.StoreLatestFinalizedBlockNumber(*block.BlockHeight)
+			if err != nil {
+				return fmt.Errorf("failed to store latest finalized block number for transaction %s: %w",
+					txSignature.String(), err)
+			}
+		} else {
+			return fmt.Errorf("no block height found for block at slot %d for transaction %s",
+				transactionResponse.Slot, txSignature.String())
+		}
+
+		event := EventNotification{
+			SlotNumber:      transactionResponse.Slot,
+			BlockNumber:     *block.BlockHeight,
+			TxSignature:     txSignature,
+			InnerActionHash: innerActionHash,
+			Program:         programID,
+			EventName:       name,
+			EventData:       parsed,
+		}
+
+		err = t.EventSubscriber.AddEvent(event)
+		if err != nil {
+			return fmt.Errorf("failed to add event: %w", err)
+		}
+
+		t.logger.Info(fmt.Sprintf("Event of type %s emitted by %s at slot %d", name, programID, transactionResponse.Slot))
+
+		err = t.storage.StoreEvent(
+			nil,
+			event.SlotNumber,
+			event.BlockNumber,
+			event.TxSignature,
+			event.Program,
+			event.EventName,
+			event.InnerActionHash,
+			event.EventData,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to store event: %w", err)
 		}
 	}
 
@@ -834,6 +842,31 @@ func (t *EventTracker) parseEvent(eventData []byte, programID solana.PublicKey) 
 	// No matching discriminator found - this is normal if the log contains
 	// data that doesn't match any tracked event types (e.g., program logs)
 	return nil, "", nil
+}
+
+// collectTransactionEvents returns the events emitted by tracked programs in a successful transaction.
+//
+// Events are read only from the emit_cpi! self-CPIs in the transaction's inner instructions (see
+// collectCPIEvents). Those are not subject to log truncation and only the emitting program can produce
+// them. "Program data:" log lines are not read at all: the tracked program emits with emit_cpi!, so it
+// writes no such lines, and anything another program logs there must not count as an event.
+func (t *EventTracker) collectTransactionEvents(
+	meta *rpc.TransactionMeta, accountKeys solana.PublicKeySlice,
+) []emittedEvent {
+	return collectCPIEvents(meta.InnerInstructions, accountKeys,
+		func(programID solana.PublicKey) (solana.PublicKey, bool) {
+			eventAuthority, tracked := t.eventAuthorities[programID]
+
+			return eventAuthority, tracked
+		})
+}
+
+// emittedEvent is a decoded event payload (8-byte discriminator and borsh-encoded event) together with
+// the program that emitted it and the index of the top-level instruction it was emitted under.
+type emittedEvent struct {
+	programID     solana.PublicKey
+	data          []byte
+	topLevelIndex int
 }
 
 // setupClient initialises config.Client if it is not already set.

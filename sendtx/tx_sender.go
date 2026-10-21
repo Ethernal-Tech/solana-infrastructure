@@ -401,6 +401,10 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 			"invalid treasury address %s in chain config: %w", txSnd.chainConfig.TreasuryAddress.String(), err)
 	}
 
+	if len(tx.Receivers) != 1 {
+		return nil, fmt.Errorf("bridging request must have exactly one receiver, got %d", len(tx.Receivers))
+	}
+
 	// for now, we only support txs with one receiver
 	receiver := tx.Receivers[0]
 
@@ -410,6 +414,7 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		WithVaultPDA(),
 		WithTokenRegistryPDA(receiver.TokenAmount.TokenID),
 		WithFeeConfigPDA(),
+		WithEventAuthorityPDA(),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
@@ -455,6 +460,8 @@ func (txSnd *TxSender) buildBridgingRequestInstruction(tx BridgeRequestDto) (sol
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
 		txSnd.instructionConfig.feeConfigPDA,
 		txSnd.chainConfig.TreasuryAddress,
+		txSnd.instructionConfig.eventAuthorityPDA,
+		programID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge request instruction: %w", err)
@@ -483,6 +490,7 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		WithProgramID(programID),
 		WithValidatorSetPDA(),
 		WithVaultPDA(),
+		WithEventAuthorityPDA(),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
@@ -508,6 +516,8 @@ func (txSnd *TxSender) buildBridgeTransactionInstruction(tx BridgeTransactionDto
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
 		solana.SysVarInstructionsPubkey,
+		txSnd.instructionConfig.eventAuthorityPDA,
+		programID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build bridge transaction instruction: %w", err)
@@ -870,6 +880,7 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 		WithProgramID(programID),
 		WithVaultPDA(),
 		WithTokenRegistryPDA(tx.TokenID),
+		WithEventAuthorityPDA(),
 	); err != nil {
 		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
 	}
@@ -896,6 +907,8 @@ func (txSnd *TxSender) buildHotWalletIncrementInstruction(tx HotWalletIncrementD
 		txSnd.instructionConfig.tokenProgramID,
 		txSnd.instructionConfig.systemProgramID,
 		txSnd.instructionConfig.splAssociatedTokenAccountProgramID,
+		txSnd.instructionConfig.eventAuthorityPDA,
+		programID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build hot wallet increment instruction: %w", err)

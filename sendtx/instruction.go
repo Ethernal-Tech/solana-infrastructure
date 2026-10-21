@@ -39,6 +39,8 @@ type InstructionConfig struct {
 	tokenRegistryPDA solana.PublicKey
 	tokenIDGuardPDA  solana.PublicKey
 	metadataPDA      solana.PublicKey
+	// eventAuthorityPDA signs the self-CPI that emit_cpi! uses to record events.
+	eventAuthorityPDA solana.PublicKey
 
 	tokenProgramID                     solana.PublicKey
 	tokenMetadataProgramID             solana.PublicKey
@@ -48,6 +50,11 @@ type InstructionConfig struct {
 }
 
 type InstructionConfigOption func(c *InstructionConfig) error
+
+// eventAuthoritySeed is the seed of Anchor's event authority PDA (#[event_cpi] / emit_cpi!).
+// It is defined by Anchor, not by the skyline IDL, so it is kept here rather than in the generated
+// skyline_program constants.
+var eventAuthoritySeed = []byte("__event_authority")
 
 func NewInstructionConfig(
 	options ...InstructionConfigOption) (*InstructionConfig, error) {
@@ -205,6 +212,21 @@ func WithMetadataPDA(mintAccount solana.PublicKey) InstructionConfigOption {
 		}
 
 		c.metadataPDA = metadataPDA
+
+		return nil
+	}
+}
+
+// WithEventAuthorityPDA derives the event authority PDA required by instructions that emit events
+// with emit_cpi! (bridge_request, bridge_transaction, hot_wallet_increment).
+func WithEventAuthorityPDA() InstructionConfigOption {
+	return func(c *InstructionConfig) error {
+		eventAuthorityPDA, err := c.derivePDA(eventAuthoritySeed)
+		if err != nil {
+			return fmt.Errorf("failed to derive event authority PDA: %w", err)
+		}
+
+		c.eventAuthorityPDA = *eventAuthorityPDA
 
 		return nil
 	}

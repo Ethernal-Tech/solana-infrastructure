@@ -12,7 +12,6 @@ package trackertest
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -102,7 +101,7 @@ type Block struct {
 }
 
 // Tx is a tracked-program transaction, carrying both the serialized transaction the RPC
-// hands out and the event the tracker is expected to decode out of its logs.
+// hands out and the event the tracker is expected to decode out of its inner instructions.
 type Tx struct {
 	// Signature is the signature of the signed transaction.
 	Signature solana.Signature
@@ -119,6 +118,9 @@ type Tx struct {
 
 	raw  []byte
 	logs []string
+
+	// innerInstructions is the transaction's innerInstructions metadata, in RPC JSON shape.
+	innerInstructions []any
 }
 
 // ChainSimulator is a chain that keeps producing slots, blocks and tracked-program
@@ -254,6 +256,66 @@ func (s *ChainSimulator) ProduceSlotWithTransactions(n int) uint64 {
 	return s.CurrentHeadSlot()
 }
 
+// ProduceSlotWithPoisonTx advances the chain by one slot whose block carries a single tracked-program
+// transaction that yields no event: the validator returns it with no log messages and no inner
+// instructions (empty arrays). It is listed and fetchable like any other transaction. Such a transaction
+// used to wedge the tracker: with nothing to process and no finalization it was refetched on every poll
+// forever. Returns the slot it landed in.
+func (s *ChainSimulator) ProduceSlotWithPoisonTx() uint64 {
+	return s.produceSlotWithModifiedTx(func(tx *Tx) {
+		tx.logs = nil
+		tx.innerInstructions = []any{}
+	})
+}
+
+// ProduceSlotWithTxWithoutInnerInstructions advances the chain by one slot whose block carries a single
+// tracked-program transaction that the validator returns with innerInstructions set to null, as it does
+// for a transaction processed while inner-instruction recording was disabled. Its event cannot be read.
+// Returns the slot it landed in.
+func (s *ChainSimulator) ProduceSlotWithTxWithoutInnerInstructions() uint64 {
+	return s.produceSlotWithModifiedTx(func(tx *Tx) {
+		tx.innerInstructions = nil
+	})
+}
+
+// produceSlotWithModifiedTx advances the chain by one slot whose block carries a single tracked-program
+// transaction, changed by modify before it is served. Returns the slot it landed in.
+func (s *ChainSimulator) produceSlotWithModifiedTx(modify func(tx *Tx)) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.headSlot++
+	s.headBlockHeight++
+	s.blocksProduced++
+
+	block := &Block{
+		Slot:       s.headSlot,
+		Height:     s.headBlockHeight,
+		Hash:       blockhashForSlot(s.headSlot),
+		blockTime:  time.Now().UTC(),
+		parentSlot: s.headSlot - 1,
+		parentHash: blockhashForSlot(s.headSlot - 1),
+	}
+
+	if len(s.slotsWithBlocks) > 0 {
+		parent := s.slotsWithBlocks[len(s.slotsWithBlocks)-1]
+		block.parentSlot = parent
+		block.parentHash = blockhashForSlot(parent)
+	}
+
+	tx := s.buildProgramTx(block)
+	modify(tx)
+
+	block.signatures = append(block.signatures, tx.Signature)
+	s.txsBySignature[tx.Signature] = tx
+	s.programTxs = append(s.programTxs, tx)
+
+	s.blocks[block.Slot] = block
+	s.slotsWithBlocks = append(s.slotsWithBlocks, block.Slot)
+
+	return s.headSlot
+}
+
 // txCountFromConfig lets the configuration decide how many transactions a block carries.
 const txCountFromConfig = -1
 
@@ -330,8 +392,8 @@ func (s *ChainSimulator) advanceSlot(policy blockPolicy, txCount int) {
 }
 
 // buildProgramTx assembles a real, signed transaction that invokes the tracked program and
-// emits a HotWalletIncrementEvent through a "Program data:" log line, exactly as an Anchor
-// program does via emit!.
+// emits a HotWalletIncrementEvent as a self-CPI in its inner instructions, exactly as an Anchor
+// program does via emit_cpi!.
 func (s *ChainSimulator) buildProgramTx(block *Block) *Tx {
 	t := s.t
 	t.Helper()
@@ -343,7 +405,7 @@ func (s *ChainSimulator) buildProgramTx(block *Block) *Tx {
 	}
 
 	// Instruction data of the call itself; opaque to the tracker, which reads events
-	// from the logs, not from the instruction payload.
+	// from the self-CPI, not from this instruction's payload.
 	ixData := make([]byte, 8, 16)
 	copy(ixData, []byte{0x7a, 0x11, 0x03, 0x9c, 0x22, 0x5f, 0x1b, 0x0d})
 	ixData = appendUint64LE(ixData, event.Amount)
@@ -355,14 +417,7 @@ func (s *ChainSimulator) buildProgramTx(block *Block) *Tx {
 			solana.AccountMetaSlice{},
 			[]byte{0x02, 0x40, 0x0d, 0x03, 0x00},
 		),
-		solana.NewInstruction(
-			s.programID,
-			solana.AccountMetaSlice{
-				{PublicKey: s.payer.PublicKey(), IsSigner: true, IsWritable: true},
-				{PublicKey: s.mint, IsSigner: false, IsWritable: false},
-			},
-			ixData,
-		),
+		solana.NewInstruction(s.programID, s.programIxAccounts(), ixData),
 	}
 
 	tx, err := solana.NewTransaction(instructions, block.Hash, solana.TransactionPayer(s.payer.PublicKey()))
@@ -382,23 +437,89 @@ func (s *ChainSimulator) buildProgramTx(block *Block) *Tx {
 
 	require.NotEmpty(t, tx.Signatures)
 
-	return &Tx{
-		Signature:  tx.Signatures[0],
-		Slot:       block.Slot,
-		Event:      event,
-		ProducedAt: time.Now().UTC(),
-		raw:        raw,
-		logs: []string{
-			fmt.Sprintf("Program %s invoke [1]", s.programID),
-			"Program log: Instruction: DepositToHotWallet",
-			"Program data: " + base64.StdEncoding.EncodeToString(encodeEventLogPayload(t, eventName, event)),
-			fmt.Sprintf("Program %s consumed 31337 of 200000 compute units", s.programID),
-			fmt.Sprintf("Program %s success", s.programID),
+	eventPayload := encodeEventLogPayload(t, eventName, event)
+
+	simTx := &Tx{
+		Signature:         tx.Signatures[0],
+		Slot:              block.Slot,
+		Event:             event,
+		ProducedAt:        time.Now().UTC(),
+		raw:               raw,
+		innerInstructions: []any{},
+	}
+
+	// emit_cpi!: the program invokes itself with EVENT_IX_TAG || event bytes, passing its event authority
+	// PDA as the only (signer) account. The program instruction is at index 1 (after ComputeBudget).
+	eventAuthority := s.eventAuthority()
+	programIndex := accountKeyIndex(t, tx.Message.AccountKeys, s.programID)
+	authorityIndex := accountKeyIndex(t, tx.Message.AccountKeys, eventAuthority)
+
+	simTx.innerInstructions = []any{
+		map[string]any{
+			"index": 1,
+			"instructions": []any{
+				map[string]any{
+					"programIdIndex": programIndex,
+					"accounts":       []uint16{authorityIndex},
+					"data":           solana.Base58(append(eventIxTag(), eventPayload...)).String(),
+					"stackHeight":    2,
+				},
+			},
 		},
+	}
+	simTx.logs = []string{
+		fmt.Sprintf("Program %s invoke [1]", s.programID),
+		"Program log: Instruction: DepositToHotWallet",
+		fmt.Sprintf("Program %s invoke [2]", s.programID),
+		fmt.Sprintf("Program %s consumed 2000 of 170000 compute units", s.programID),
+		fmt.Sprintf("Program %s success", s.programID),
+		fmt.Sprintf("Program %s consumed 31337 of 200000 compute units", s.programID),
+		fmt.Sprintf("Program %s success", s.programID),
+	}
+
+	return simTx
+}
+
+// programIxAccounts is the account list of the simulated program instruction. It ends with the event
+// authority PDA and the program itself, as #[event_cpi] appends them.
+func (s *ChainSimulator) programIxAccounts() solana.AccountMetaSlice {
+	return solana.AccountMetaSlice{
+		{PublicKey: s.payer.PublicKey(), IsSigner: true, IsWritable: true},
+		{PublicKey: s.mint, IsSigner: false, IsWritable: false},
+		{PublicKey: s.eventAuthority()},
+		{PublicKey: s.programID},
 	}
 }
 
-// encodeEventLogPayload builds the bytes an Anchor emit! puts into a "Program data:" log:
+// eventAuthority returns the program's emit_cpi! event authority PDA. It is derived here independently
+// of the tracker, so a mismatch shows up as undelivered events instead of cancelling out.
+func (s *ChainSimulator) eventAuthority() solana.PublicKey {
+	pda, _, err := solana.FindProgramAddress([][]byte{[]byte("__event_authority")}, s.programID)
+	require.NoError(s.t, err)
+
+	return pda
+}
+
+// eventIxTag is Anchor's EVENT_IX_TAG (0x1d9acb512ea545e4) as the little-endian bytes emit_cpi! prefixes.
+func eventIxTag() []byte {
+	return appendUint64LE(nil, 0x1d9acb512ea545e4)
+}
+
+func accountKeyIndex(t *testing.T, keys solana.PublicKeySlice, key solana.PublicKey) uint16 {
+	t.Helper()
+
+	for i, k := range keys {
+		if k.Equals(key) {
+			return uint16(i) //nolint:gosec // a transaction holds far fewer than 65536 account keys
+		}
+	}
+
+	require.FailNowf(t, "account key not found", "%s is not in the transaction's account keys", key)
+
+	return 0
+}
+
+// encodeEventLogPayload builds the event bytes Anchor's emit_cpi! sends after the event tag:
 // the 8-byte event discriminator followed by the borsh-serialized event. The discriminator
 // is derived here independently of the tracker's own derivation, so a change to either side
 // shows up as a decoding failure instead of cancelling out.
