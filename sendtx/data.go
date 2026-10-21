@@ -11,8 +11,7 @@ import (
 
 var Ed25519ProgramID = solana.MustPublicKeyFromBase58("Ed25519SigVerify111111111111111111111111111")
 
-// MaxBridgeTransactionReceivers must match skyline_program MAX_TRANSFERS!
-const MaxBridgeTransactionReceivers = 3
+const MaxBridgeTransactionReceivers = 5
 
 // BridgeTransactionMaxReceiversComputeUnitLimit is the compute unit budget for
 // bridge transactions at MaxBridgeTransactionReceivers (Solana default is 200k we 2x that).

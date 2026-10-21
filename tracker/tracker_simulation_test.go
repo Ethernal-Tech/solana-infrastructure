@@ -1488,3 +1488,63 @@ func requireChainHeadAdvanced(t *testing.T, run *simRun) {
 	require.Equal(t, block.Hash, latestBlockPoint.BlockHash)
 	require.Equal(t, block.Height, latestBlockPoint.BlockNumber)
 }
+
+// TestEventTracker_AdvancesPastTxWithNoLogs is the regression test for the stall where a single
+// unprocessable transaction wedged the tracker for good. A transaction the validator returns with no
+// log messages used to be returned without being finalized, so it stayed the next unprocessed
+// signature and the polling loop refetched it on every pass forever. The tracker must finalize it and
+// keep going.
+func TestEventTracker_AdvancesPastTxWithNoLogs(t *testing.T) {
+	cfg := trackertest.DefaultConfig()
+	// Only the transactions this test produces explicitly, in a known order, and dense slots so the
+	// chain head advances past them quickly.
+	cfg.TxEvery = 0
+	cfg.EmptySlotEvery = 0
+	cfg.HistorySlots = 0
+
+	sim := trackertest.NewChainSimulator(t, cfg)
+
+	run := newSimRun(t, sim, runConfig{})
+	run.startTracker()
+
+	// A genuine transaction, then one the validator returns with no log messages, then another
+	// genuine transaction. The poison transaction sits between the two: if it wedges the tracker the
+	// second genuine event is never delivered.
+	sim.ProduceSlotWithTransactions(1)
+	sim.ProduceSlotWithPoisonTx()
+	sim.ProduceSlotWithTransactions(1)
+
+	// Headroom so the chain head advances past all three and the tracker processes them.
+	sim.ProduceSlotsWithBlocks(10)
+
+	run.waitForDelivered(2, cursorTimeout)
+
+	require.GreaterOrEqual(t, run.deliveredCount(), 2,
+		"the tracker stalled on the transaction with no log messages and never reached the one after it")
+}
+
+// TestEventTracker_AdvancesPastTxWithoutInnerInstructions checks that a transaction whose inner instruction
+// metadata is missing (null) is skipped rather than retried. Its metadata never changes, so retrying would
+// stall the tracker for good. Its own event cannot be read and is not delivered.
+func TestEventTracker_AdvancesPastTxWithoutInnerInstructions(t *testing.T) {
+	cfg := trackertest.DefaultConfig()
+	cfg.TxEvery = 0
+	cfg.EmptySlotEvery = 0
+	cfg.HistorySlots = 0
+
+	sim := trackertest.NewChainSimulator(t, cfg)
+
+	run := newSimRun(t, sim, runConfig{})
+	run.startTracker()
+
+	sim.ProduceSlotWithTransactions(1)
+	sim.ProduceSlotWithTxWithoutInnerInstructions()
+	sim.ProduceSlotWithTransactions(1)
+
+	sim.ProduceSlotsWithBlocks(10)
+
+	run.waitForDelivered(2, cursorTimeout)
+
+	require.Equal(t, 2, run.deliveredCount(),
+		"the tracker must skip the transaction without inner instructions and deliver the two around it")
+}
