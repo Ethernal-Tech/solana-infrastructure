@@ -418,7 +418,7 @@ func encodeEventLogPayload(t *testing.T, name string, event any) []byte {
 
 func appendUint64LE(dst []byte, v uint64) []byte {
 	for i := 0; i < 8; i++ {
-		dst = append(dst, byte(v>>(8*i)))
+		dst = append(dst, byte(v>>(8*i))) //nolint:gosec // truncation to the low byte is intended
 	}
 
 	return dst
@@ -429,7 +429,7 @@ func blockhashForSlot(slot uint64) solana.Hash {
 
 	// Deterministic, slot-derived, and distinct per slot.
 	for i := 0; i < len(hash); i++ {
-		hash[i] = byte(slot >> (8 * (i % 8)))
+		hash[i] = byte(slot >> (8 * (i % 8))) //nolint:gosec // truncation to the low byte is intended
 	}
 
 	hash[8] = byte(slot % 251)

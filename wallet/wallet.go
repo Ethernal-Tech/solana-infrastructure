@@ -65,9 +65,6 @@ func (w *Wallet) ValidatePrivateKey() error {
 
 func IsSolanaAddress(address string) bool {
 	_, err := PublicKeyFromAddress(address)
-	if err != nil {
-		return false
-	}
 
-	return true
+	return err == nil
 }

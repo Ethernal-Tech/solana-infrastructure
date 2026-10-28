@@ -1,6 +1,6 @@
 module github.com/Ethernal-Tech/solana-infrastructure
 
-go 1.24.1
+go 1.27.3
 
 require (
 	github.com/Ethernal-Tech/cardano-infrastructure v0.0.0-20251212171506-46b345fff73c
