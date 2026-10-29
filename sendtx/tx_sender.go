@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	infracommon "github.com/Ethernal-Tech/cardano-infrastructure/common"
 	"github.com/Ethernal-Tech/solana-infrastructure/sendtx/skyline_program"
@@ -713,6 +714,10 @@ func (txSnd *TxSender) buildBatchedEd25519Instruction(
 		return nil, fmt.Errorf("no signature pairs provided")
 	}
 
+	if numSigs > math.MaxUint8 {
+		return nil, fmt.Errorf("too many signature pairs: %d, max %d", numSigs, math.MaxUint8)
+	}
+
 	if len(payloadBytes) == 0 {
 		return nil, fmt.Errorf("payload bytes is empty")
 	}
@@ -740,12 +745,12 @@ func (txSnd *TxSender) buildBatchedEd25519Instruction(
 		publicKeyOffset := payloadOffset
 		signatureOffset := publicKeyOffset + PubKeyLength
 		offsets := make([]byte, Ed25519ProgramOffsetsSize)
-		binary.LittleEndian.PutUint16(offsets[0:], uint16(signatureOffset)) //nolint:gosec // signature offset
+		binary.LittleEndian.PutUint16(offsets[0:], uint16(signatureOffset)) // signature offset
 		// Reference "current instruction" to support any transaction position.
 		binary.LittleEndian.PutUint16(offsets[2:], CurrentInstructionIndex)    // padding
-		binary.LittleEndian.PutUint16(offsets[4:], uint16(publicKeyOffset))    //nolint:gosec // public key offset
+		binary.LittleEndian.PutUint16(offsets[4:], uint16(publicKeyOffset))    // public key offset
 		binary.LittleEndian.PutUint16(offsets[6:], CurrentInstructionIndex)    // padding
-		binary.LittleEndian.PutUint16(offsets[8:], uint16(sharedMsgOffset))    //nolint:gosec // shared message offset
+		binary.LittleEndian.PutUint16(offsets[8:], uint16(sharedMsgOffset))    // shared message offset
 		binary.LittleEndian.PutUint16(offsets[10:], uint16(len(payloadBytes))) //nolint:gosec // message length
 		binary.LittleEndian.PutUint16(offsets[12:], CurrentInstructionIndex)   // padding
 		data = append(data, offsets...)

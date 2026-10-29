@@ -594,9 +594,9 @@ func logProbeSummary(t *testing.T, results []methodProbeResult) {
 			source = "429"
 		}
 
-		summary.WriteString(fmt.Sprintf("%-25s %10d  %8s  %6s  %6d  %10d  %9d\n",
+		fmt.Fprintf(&summary, "%-25s %10d  %8s  %6s  %6d  %10d  %9d\n",
 			result.method, result.limit, orNA(value), source, result.served,
-			result.methodRefusals, result.otherRefusals))
+			result.methodRefusals, result.otherRefusals)
 	}
 
 	t.Log(summary.String())

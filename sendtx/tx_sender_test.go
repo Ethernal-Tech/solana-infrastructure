@@ -2696,3 +2696,35 @@ func TestMarshalTransaction(t *testing.T) {
 	require.Equal(t, tx.Message.Instructions, unmarshaledTx.Message.Instructions)
 	require.Len(t, tx.Message.Instructions, 2)
 }
+
+func TestBuildBatchedEd25519Instruction(t *testing.T) {
+	signaturePairs := func(n int) map[solana.PublicKey]solana.Signature {
+		pairs := make(map[solana.PublicKey]solana.Signature, n)
+
+		for i := 0; i < n; i++ {
+			var pubkey solana.PublicKey
+
+			pubkey[0], pubkey[1] = byte(i), byte(i>>8)
+			pairs[pubkey] = solana.Signature{}
+		}
+
+		return pairs
+	}
+
+	txSnd := &TxSender{}
+	payload := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+
+	t.Run("max signature pairs", func(t *testing.T) {
+		ix, err := txSnd.buildBatchedEd25519Instruction(signaturePairs(255), payload)
+		require.NoError(t, err)
+
+		data, err := ix.Data()
+		require.NoError(t, err)
+		require.Equal(t, byte(255), data[0])
+	})
+
+	t.Run("too many signature pairs", func(t *testing.T) {
+		_, err := txSnd.buildBatchedEd25519Instruction(signaturePairs(256), payload)
+		require.ErrorContains(t, err, "too many signature pairs: 256")
+	})
+}

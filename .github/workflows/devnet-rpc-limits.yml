@@ -25,7 +25,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5.0.0
         with:
-          go-version: 1.24.1
+          go-version: 1.27.3
       - name: Probe devnet rate limits
         env:
           SOLANA_DEVNET_RATE_LIMIT_TEST: '1'
