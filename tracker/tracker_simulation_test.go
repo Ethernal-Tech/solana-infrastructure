@@ -679,9 +679,10 @@ func TestEventTracker_FiltersRequeriedEventlessCursor(t *testing.T) {
 
 	run.startTracker()
 
-	require.True(t, run.waitForCondition("the tracker to filter the re-queried cursor out", cursorTimeout,
-		func() bool { return strings.Contains(run.logs.String(), "Skipping duplicate transaction signature") }),
-		"the tracker never recognised the re-queried cursor transaction as already processed")
+	// The refused query, the fallback by slot, then a second query from the same cursor: by then
+	// the tracker has dealt with the fallback's answer.
+	require.True(t, run.waitForQueriesUntil(cursorTx.Signature, 2, cursorTimeout),
+		"the tracker never went back to querying from the cursor after falling back")
 
 	unprocessed, err := run.storage.GetAllUnprocessedTransactions()
 	require.NoError(t, err)
@@ -692,7 +693,8 @@ func TestEventTracker_FiltersRequeriedEventlessCursor(t *testing.T) {
 	nextTx := sim.ProducedTxsFromSlot(nextSlot)[0]
 
 	run.waitForDelivered(1, cursorTimeout)
-	time.Sleep(cursorSettlePhase)
+	require.True(t, run.waitForQueriesUntil(nextTx.Signature, 1, cursorTimeout),
+		"the tracker never went back to querying after the transaction behind the cursor")
 	run.stopTracker()
 
 	requireSlotMatesWereRequeried(t, run, cursorTx, 1)
@@ -733,7 +735,8 @@ func TestEventTracker_DropsQueuedLastProcessedTransaction(t *testing.T) {
 
 	run.startTracker()
 	run.waitForDelivered(1, cursorTimeout)
-	time.Sleep(cursorSettlePhase)
+	require.True(t, run.waitForQueriesUntil(nextTx.Signature, 1, cursorTimeout),
+		"the tracker never went back to querying after draining the queue")
 	run.stopTracker()
 
 	require.Contains(t, run.logs.String(), "Dropping already processed transaction",
@@ -1380,6 +1383,24 @@ func (r *simRun) waitForCondition(what string, timeout time.Duration, cond func(
 		case <-ticker.C:
 		}
 	}
+}
+
+// waitForQueriesUntil waits until the tracker has asked the node for signatures with the given
+// cursor count times. The tracker only queries from a cursor once everything up to it is
+// processed, so a query from it means the tracker has settled there instead of stalling.
+func (r *simRun) waitForQueriesUntil(cursor solana.Signature, count int, timeout time.Duration) bool {
+	return r.waitForCondition(fmt.Sprintf("%d queries from cursor %s", count, cursor), timeout,
+		func() bool {
+			seen := 0
+
+			for _, query := range r.sim.SignatureQueries() {
+				if query.Until == cursor {
+					seen++
+				}
+			}
+
+			return seen >= count
+		})
 }
 
 // runTracker starts the chain and the tracker, runs them as configured, then stops the
