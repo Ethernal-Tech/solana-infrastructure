@@ -316,28 +316,6 @@ func (t *EventTracker) runTransactionPolling(ctx context.Context) {
 	}
 }
 
-func (t *EventTracker) getLastUnprocessedTxSignature() (store.TxPoint, error) {
-	unprocessedTxPoints, err := t.storage.GetAllUnprocessedTransactions()
-	if err != nil {
-		return store.TxPoint{}, err
-	}
-
-	if len(unprocessedTxPoints) == 0 {
-		lastProcessed, err := t.storage.GetLastProcessedTransaction()
-		if err != nil {
-			return store.TxPoint{}, err
-		}
-
-		if lastProcessed.TxSignature == (solana.Signature{}) {
-			return store.TxPoint{}, nil
-		}
-
-		return lastProcessed, nil
-	}
-
-	return unprocessedTxPoints[0], nil
-}
-
 // Initialization on startup
 func (t *EventTracker) initialize() error {
 	latestBlockPoint, err := t.storage.GetLatestBlockPoint()
@@ -356,9 +334,13 @@ func (t *EventTracker) initialize() error {
 
 // Fetches tx and does processing
 func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error {
-	txPoint, err := t.getLastUnprocessedTxSignature()
+	unprocessedTxPoints, err := t.storage.GetAllUnprocessedTransactions()
 	if err != nil {
 		return err
+	}
+
+	if len(unprocessedTxPoints) == 0 {
+		return nil
 	}
 
 	lastProcessed, err := t.storage.GetLastProcessedTransaction()
@@ -366,11 +348,16 @@ func (t *EventTracker) fetchNextGetFullTxBySignature(ctx context.Context) error 
 		return err
 	}
 
-	if txPoint.TxSignature == (solana.Signature{}) || txPoint.TxSignature == lastProcessed.TxSignature {
-		return nil
-	}
+	txSignature := unprocessedTxPoints[0].TxSignature
 
-	txSignature := txPoint.TxSignature
+	// The last processed tx was queued again, e.g. re-queried by slot after the cursor was lost.
+	// Drop it, otherwise it sits at the head of the queue and blocks everything behind it.
+	if txSignature == lastProcessed.TxSignature {
+		t.logger.Warn(fmt.Sprintf("Dropping already processed transaction %s from the unprocessed queue",
+			txSignature.String()))
+
+		return t.storage.FinalizeProcessedTransaction(txSignature)
+	}
 
 	t.logger.Debug("Fetching next full tx by signature", "tx signature", txSignature.String())
 
@@ -1054,7 +1041,18 @@ func (t *EventTracker) getQueuedTxSignatures(slot uint64) (map[solana.Signature]
 		return nil, fmt.Errorf("failed to get processed transaction signatures: %w", err)
 	}
 
-	queued := make(map[solana.Signature]struct{}, len(unprocessedTxSignatures)+len(processedTxSignatures))
+	// Processed txs without events have no stored record, so the last processed one is added
+	// explicitly; it is the query cursor that a re-query by slot hands back.
+	lastProcessed, err := t.storage.GetLastProcessedTransaction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get last processed transaction: %w", err)
+	}
+
+	queued := make(map[solana.Signature]struct{}, len(unprocessedTxSignatures)+len(processedTxSignatures)+1)
+
+	if lastProcessed.TxSignature != (solana.Signature{}) {
+		queued[lastProcessed.TxSignature] = struct{}{}
+	}
 
 	for _, txSignature := range unprocessedTxSignatures {
 		queued[txSignature.TxSignature] = struct{}{}
