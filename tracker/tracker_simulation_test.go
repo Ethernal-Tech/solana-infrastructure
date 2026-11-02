@@ -647,6 +647,108 @@ func TestEventTracker_FiltersRequeriedSameSlotTransactions(t *testing.T) {
 		sameSlotTxCount-1, sharedSlot, len(run.delivered), len(records))
 }
 
+// TestEventTracker_FiltersRequeriedEventlessCursor replays the 2026-10-31 devnet stall. The
+// query cursor sits on a processed transaction that emitted no event (an IdlWrite), so no
+// stored event records it as done. The node refuses that cursor once, the tracker re-queries
+// by slot and gets the cursor transaction back, and the duplicate filter has to recognise it
+// as the last processed one. Otherwise it is queued again, and the next real transaction
+// queued behind it is never processed.
+func TestEventTracker_FiltersRequeriedEventlessCursor(t *testing.T) {
+	cfg := trackertest.DefaultConfig()
+	// A scripted chain: nothing lands unless the test produces it.
+	cfg.SlotDuration = time.Hour
+	cfg.HistorySlots = 0
+
+	sim := trackertest.NewChainSimulator(t, cfg)
+
+	cursorSlot := sim.ProduceSlotWithTransactions(1)
+	cursorTx := sim.ProducedTxsFromSlot(cursorSlot)[0]
+
+	run := newSimRun(t, sim, runConfig{
+		startFromSlot: cursorSlot,
+		// The cursor transaction counts as processed already, so only what follows it is expected.
+		expectFromSlot: cursorSlot + 1,
+		logLevel:       hclog.Debug,
+	})
+
+	// Processed and queried, but with no event stored for it, as for a transaction that emitted none.
+	require.NoError(t, run.storage.SetLastProcessedTransaction(txPointOf(cursorTx)))
+	require.NoError(t, run.storage.StoreLatestQueriedTransaction(txPointOf(cursorTx)))
+
+	sim.RefuseCursorOnce(cursorTx.Signature)
+
+	run.startTracker()
+
+	require.True(t, run.waitForCondition("the tracker to filter the re-queried cursor out", cursorTimeout,
+		func() bool { return strings.Contains(run.logs.String(), "Skipping duplicate transaction signature") }),
+		"the tracker never recognised the re-queried cursor transaction as already processed")
+
+	unprocessed, err := run.storage.GetAllUnprocessedTransactions()
+	require.NoError(t, err)
+	require.Empty(t, unprocessed, "the already processed cursor transaction was queued again")
+
+	// The next real transaction has to go through.
+	nextSlot := sim.ProduceSlotWithTransactions(1)
+	nextTx := sim.ProducedTxsFromSlot(nextSlot)[0]
+
+	run.waitForDelivered(1, cursorTimeout)
+	time.Sleep(cursorSettlePhase)
+	run.stopTracker()
+
+	requireSlotMatesWereRequeried(t, run, cursorTx, 1)
+
+	require.Len(t, run.delivered, 1, "the transaction after the cursor was not delivered exactly once")
+	require.Equal(t, nextTx.Signature, run.delivered[0].TxSignature)
+	require.NotContains(t, run.logs.String(), "Dropping already processed transaction",
+		"the cursor transaction was queued again and only dropped later")
+
+	requireTxStateConsistent(t, run)
+}
+
+// TestEventTracker_DropsQueuedLastProcessedTransaction starts the tracker on the database a
+// stalled devnet validator was left with: the last processed transaction queued again at the
+// head of the queue, with a real transaction waiting behind it. The tracker has to drop the
+// stale head and carry on. Restarting the process does not clear this state.
+func TestEventTracker_DropsQueuedLastProcessedTransaction(t *testing.T) {
+	cfg := trackertest.DefaultConfig()
+	cfg.SlotDuration = time.Hour
+	cfg.HistorySlots = 0
+
+	sim := trackertest.NewChainSimulator(t, cfg)
+
+	staleSlot := sim.ProduceSlotWithTransactions(1)
+	staleTx := sim.ProducedTxsFromSlot(staleSlot)[0]
+
+	nextSlot := sim.ProduceSlotWithTransactions(1)
+	nextTx := sim.ProducedTxsFromSlot(nextSlot)[0]
+
+	run := newSimRun(t, sim, runConfig{
+		startFromSlot:  staleSlot,
+		expectFromSlot: nextSlot,
+	})
+
+	require.NoError(t, run.storage.SetLastProcessedTransaction(txPointOf(staleTx)))
+	require.NoError(t, run.storage.PushUnprocessedTransactions([]store.TxPoint{txPointOf(staleTx), txPointOf(nextTx)}))
+	require.NoError(t, run.storage.StoreLatestQueriedTransaction(txPointOf(nextTx)))
+
+	run.startTracker()
+	run.waitForDelivered(1, cursorTimeout)
+	time.Sleep(cursorSettlePhase)
+	run.stopTracker()
+
+	require.Contains(t, run.logs.String(), "Dropping already processed transaction",
+		"the tracker never dropped the stale queue head")
+
+	require.Len(t, run.delivered, 1, "the transaction behind the stale queue head was not delivered exactly once")
+	require.Equal(t, nextTx.Signature, run.delivered[0].TxSignature)
+
+	unprocessed, err := run.storage.GetAllUnprocessedTransactions()
+	require.NoError(t, err)
+	require.Empty(t, unprocessed, "the queue was not drained")
+
+	requireTxStateConsistent(t, run)
+}
+
 // requireSlotMatesWereRequeried checks the node really did hand the already-processed
 // transactions back: a query carrying the lost cursor was refused, and the cursorless query
 // that followed answered with the transactions sharing its slot.

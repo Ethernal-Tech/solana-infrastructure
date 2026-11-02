@@ -144,6 +144,7 @@ type ChainSimulator struct {
 	txsPaused           bool
 	forgottenBeforeSlot uint64
 	forgottenSignatures map[solana.Signature]struct{}
+	refusedOnce         map[solana.Signature]struct{}
 
 	callCounts       map[string]int
 	signatureQueries []SignatureQuery
@@ -489,6 +490,20 @@ func (s *ChainSimulator) ForgetSignature(signature solana.Signature) {
 	s.forgottenSignatures[signature] = struct{}{}
 }
 
+// RefuseCursorOnce makes the node answer the next getSignaturesForAddress query carrying the
+// signature as a cursor with the not-found error, once, while still listing the transaction
+// itself. That is what a load-balanced RPC does when one backend briefly lags the others.
+func (s *ChainSimulator) RefuseCursorOnce(signature solana.Signature) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.refusedOnce == nil {
+		s.refusedOnce = make(map[solana.Signature]struct{})
+	}
+
+	s.refusedOnce[signature] = struct{}{}
+}
+
 // visibleProgramTxs returns the transactions the node still answers for, in production order.
 // The caller must hold at least a read lock.
 func (s *ChainSimulator) visibleProgramTxs() []*Tx {
@@ -681,11 +696,20 @@ func (s *ChainSimulator) getTransaction(signature solana.Signature) *Tx {
 func (s *ChainSimulator) getSignaturesForAddress(
 	address solana.PublicKey, before, until solana.Signature, limit int,
 ) ([]*rpc.TransactionSignature, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// A write lock, since answering may use up a one-off refusal.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if !address.Equals(s.programID) {
 		return nil, nil
+	}
+
+	for _, cursor := range []solana.Signature{before, until} {
+		if _, refused := s.refusedOnce[cursor]; refused && !cursor.IsZero() {
+			delete(s.refusedOnce, cursor)
+
+			return nil, signatureNotFoundError(cursor)
+		}
 	}
 
 	visible := s.visibleProgramTxs()
