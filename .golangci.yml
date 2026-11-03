@@ -9,7 +9,7 @@ linters:
   default: none
   enable:
     - whitespace # Tool for detection of leading and trailing whitespace
-    - wsl # Forces you to use empty lines
+    - wsl_v5 # Forces you to use empty lines
     - wastedassign # Finds wasted assignment statements
     - unconvert # Unnecessary type conversions
     - tparallel # Detects inappropriate usage of t.Parallel() method in your Go test codes
@@ -43,6 +43,10 @@ linters:
       settings:
         ruleguard:
           rules: ./gorules/rules.go
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
   exclusions:
     generated: lax
     # The "comments" preset is left out so missing or malformed doc comments are reported
@@ -60,7 +64,7 @@ linters:
           - goconst
       - path: gen_sc_data\.go
         linters:
-          - wsl
+          - wsl_v5
           - lll
           - staticcheck
     paths:

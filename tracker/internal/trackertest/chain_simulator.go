@@ -511,7 +511,7 @@ func accountKeyIndex(t *testing.T, keys solana.PublicKeySlice, key solana.Public
 
 	for i, k := range keys {
 		if k.Equals(key) {
-			return uint16(i) //nolint:gosec // a transaction holds far fewer than 65536 account keys
+			return uint16(i) // a transaction holds far fewer than 65536 account keys
 		}
 	}
 

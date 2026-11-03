@@ -51,6 +51,7 @@ type SolanaPayload struct {
 
 func (payload SolanaPayload) Marshal() ([]byte, error) {
 	var buf bytes.Buffer
+
 	enc := bin.NewBinEncoder(&buf)
 
 	if err := enc.Encode(payload); err != nil {

@@ -250,11 +250,13 @@ func (t *EventTracker) Start(ctx context.Context) {
 
 	go func() {
 		defer wg.Done()
+
 		t.runChainHeadRefresh(ctx)
 	}()
 
 	go func() {
 		defer wg.Done()
+
 		t.runTransactionPolling(ctx)
 	}()
 

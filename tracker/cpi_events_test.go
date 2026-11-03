@@ -18,9 +18,9 @@ import (
 // tag is spelled out here rather than taken from eventIxTagLE, so a wrong tag in the tracker fails the
 // tests instead of cancelling out.
 func cpiEventData(event []byte) solana.Base58 {
-	tag := []byte{0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d} // 0x1d9acb512ea545e4, little-endian
+	tag := [8]byte{0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d} // 0x1d9acb512ea545e4, little-endian
 
-	return append(tag, event...)
+	return append(tag[:], event...)
 }
 
 func TestDeriveEventAuthority(t *testing.T) {

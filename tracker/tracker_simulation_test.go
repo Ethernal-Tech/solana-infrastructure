@@ -336,7 +336,9 @@ func TestEventTracker_ResumesAfterRestart(t *testing.T) {
 
 	// The chain keeps moving while the tracker is down, so the next life has a backlog.
 	downtimeStart := time.Now().UTC()
+
 	time.Sleep(restartDowntime)
+
 	downtimeEnd := time.Now().UTC()
 
 	producedDuringDowntime := txsProducedBetween(run.expectedNow(), downtimeStart, downtimeEnd)
