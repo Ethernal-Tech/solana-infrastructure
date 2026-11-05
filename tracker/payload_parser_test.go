@@ -80,7 +80,7 @@ func TestExtractSolanaPayloadFromEd25519(t *testing.T) {
 
 	ed25519Data := buildTestEd25519InstructionData(t, payloadBytes, 1)
 
-	got, err := ExtractSolanaPayloadFromEd25519(ed25519Data)
+	got, err := ExtractSolanaPayloadFromEd25519(ed25519Data, 0)
 	require.NoError(t, err)
 	require.Equal(t, original, *got)
 }
@@ -97,7 +97,7 @@ func TestExtractSolanaPayloadFromEd25519_ProductionPayload(t *testing.T) {
 
 	ed25519Data := buildTestEd25519InstructionData(t, raw, 2)
 
-	got, err := ExtractSolanaPayloadFromEd25519(ed25519Data)
+	got, err := ExtractSolanaPayloadFromEd25519(ed25519Data, 0)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), got.BatchID)
 	require.Equal(t, uint64(1_000_000_000), got.FeeAmount)
@@ -105,38 +105,148 @@ func TestExtractSolanaPayloadFromEd25519_ProductionPayload(t *testing.T) {
 	require.Equal(t, uint16(25), got.Receivers[0].TokenAmount.TokenID)
 }
 
-func TestFindEd25519InstructionData(t *testing.T) {
-	t.Parallel()
-
-	otherProgram := solana.NewWallet().PublicKey()
-	ed25519Data := []byte{1, 0, 1, 2, 3}
-
-	instructions := []solana.CompiledInstruction{
-		{ProgramIDIndex: 0, Data: []byte{9, 9, 9}},
-		{ProgramIDIndex: 1, Data: ed25519Data},
-	}
-	accountKeys := solana.PublicKeySlice{otherProgram, sendtx.Ed25519ProgramID}
-
-	got, err := FindEd25519InstructionData(instructions, accountKeys)
-	require.NoError(t, err)
-	require.Equal(t, ed25519Data, got)
-}
-
-func TestFindEd25519InstructionData_NotFound(t *testing.T) {
-	t.Parallel()
-
-	instructions := []solana.CompiledInstruction{
-		{ProgramIDIndex: 0, Data: []byte{1, 2, 3}},
-	}
-	accountKeys := solana.PublicKeySlice{solana.NewWallet().PublicKey()}
-
-	_, err := FindEd25519InstructionData(instructions, accountKeys)
-	require.Error(t, err)
-}
-
 func TestExtractSolanaPayloadFromEd25519_TooShort(t *testing.T) {
 	t.Parallel()
 
-	_, err := ExtractSolanaPayloadFromEd25519([]byte{1})
+	_, err := ExtractSolanaPayloadFromEd25519([]byte{1}, 0)
 	require.Error(t, err)
+}
+
+// TestExtractSolanaPayloadFromEd25519_MatchesProgramRules checks that the decoder only accepts what the
+// program's parse_ed25519_batch accepts, so it can never decode a payload the program did not verify.
+func TestExtractSolanaPayloadFromEd25519_MatchesProgramRules(t *testing.T) {
+	t.Parallel()
+
+	payload := sendtx.SolanaPayload{
+		Blockhash: [32]byte(solana.NewWallet().PublicKey()),
+		Receivers: []sendtx.PayloadReceiver{{
+			Address:     [32]byte(solana.NewWallet().PublicKey()),
+			TokenAmount: wallet.TokenAmount{TokenID: 1, Amount: 1_000_000},
+		}},
+		FeeAmount: 1_000,
+		BatchID:   7,
+	}
+
+	raw, err := payload.Marshal()
+	require.NoError(t, err)
+
+	const (
+		numSigs = 3
+		ixIndex = 4 // position of the ed25519 instruction in the transaction
+	)
+
+	// valid returns fresh, valid instruction data with numSigs signatures over the payload.
+	valid := func() []byte {
+		return buildTestEd25519InstructionData(t, raw, numSigs)
+	}
+
+	// setField overwrites one u16 field of offsets entry sig.
+	setField := func(data []byte, sig, field int, value uint16) {
+		binary.LittleEndian.PutUint16(data[ed25519HeaderSize+sig*ed25519OffsetsStructLen+field:], value)
+	}
+
+	t.Run("accepts the current-instruction marker", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := ExtractSolanaPayloadFromEd25519(valid(), ixIndex)
+		require.NoError(t, err)
+		require.Equal(t, payload, *got)
+	})
+
+	t.Run("accepts an explicit reference to its own index", func(t *testing.T) {
+		t.Parallel()
+
+		data := valid()
+		for sig := 0; sig < numSigs; sig++ {
+			setField(data, sig, ed25519SigIxField, ixIndex)
+			setField(data, sig, ed25519PubKeyIxField, ixIndex)
+			setField(data, sig, ed25519MsgIxField, ixIndex)
+		}
+
+		got, err := ExtractSolanaPayloadFromEd25519(data, ixIndex)
+		require.NoError(t, err)
+		require.Equal(t, payload, *got)
+	})
+
+	rejected := []struct {
+		name    string
+		corrupt func(data []byte) []byte
+	}{
+		{
+			name: "a message stored in another instruction",
+			corrupt: func(data []byte) []byte {
+				setField(data, 0, ed25519MsgIxField, ixIndex-1)
+
+				return data
+			},
+		},
+		{
+			name: "a signature stored in another instruction",
+			corrupt: func(data []byte) []byte {
+				setField(data, 1, ed25519SigIxField, ixIndex+1)
+
+				return data
+			},
+		},
+		{
+			name: "a public key stored in another instruction",
+			corrupt: func(data []byte) []byte {
+				setField(data, 2, ed25519PubKeyIxField, 0)
+
+				return data
+			},
+		},
+		{
+			name: "a later signature over a different message",
+			corrupt: func(data []byte) []byte {
+				// Point the last signature at one byte less of the same message.
+				msgSize := binary.LittleEndian.Uint16(
+					data[ed25519HeaderSize+(numSigs-1)*ed25519OffsetsStructLen+ed25519MsgSizeField:])
+				setField(data, numSigs-1, ed25519MsgSizeField, msgSize-1)
+
+				return data
+			},
+		},
+		{
+			name: "a signature offset beyond the data",
+			corrupt: func(data []byte) []byte {
+				setField(data, 1, ed25519SigOffsetField, uint16(len(data)-ed25519SigLength+1))
+
+				return data
+			},
+		},
+		{
+			name: "a public key offset beyond the data",
+			corrupt: func(data []byte) []byte {
+				setField(data, 0, ed25519PubKeyOffsetField, uint16(len(data)))
+
+				return data
+			},
+		},
+		{
+			name: "an offsets table longer than the data",
+			corrupt: func(data []byte) []byte {
+				data[0] = 200
+
+				return data
+			},
+		},
+		{
+			name: "zero signatures",
+			corrupt: func(data []byte) []byte {
+				data[0] = 0
+
+				return data
+			},
+		},
+	}
+
+	for _, tc := range rejected {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := ExtractSolanaPayloadFromEd25519(tc.corrupt(valid()), ixIndex)
+			require.Error(t, err)
+		})
+	}
 }

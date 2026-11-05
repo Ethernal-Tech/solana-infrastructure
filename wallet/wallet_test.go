@@ -183,6 +183,7 @@ func TestMarshalSignature(t *testing.T) {
 
 		// Verify the base58 string is valid
 		var unmarshaled solana.Signature
+
 		err = unmarshaled.UnmarshalJSON(jsonBytes)
 		require.NoError(t, err)
 		assert.Equal(t, testSignature, unmarshaled)
@@ -197,6 +198,7 @@ func TestMarshalSignature(t *testing.T) {
 
 		// Should marshal to "11111111111111111111111111111111" (base58 for zeros)
 		var unmarshaled solana.Signature
+
 		err = unmarshaled.UnmarshalJSON(jsonBytes)
 		require.NoError(t, err)
 		assert.Equal(t, emptySignature, unmarshaled)

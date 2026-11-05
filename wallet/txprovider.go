@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -92,6 +93,10 @@ func (p *Provider) GetBalance(ctx context.Context, pubkey solana.PublicKey) (uin
 		return 0, err
 	}
 
+	if out == nil {
+		return 0, errors.New("getBalance returned empty result")
+	}
+
 	// returns in lamports 1 SOL = 1e9 lamports
 	return out.Value, nil
 }
@@ -100,11 +105,20 @@ func (p *Provider) GetTokenAccountBalance(
 	ctx context.Context,
 	pubkey solana.PublicKey,
 ) (*rpc.GetTokenAccountBalanceResult, error) {
-	return p.rpcClient.GetTokenAccountBalance(
+	out, err := p.rpcClient.GetTokenAccountBalance(
 		ctx,
 		pubkey,
 		rpc.CommitmentConfirmed,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	if out == nil || out.Value == nil {
+		return nil, errors.New("getTokenAccountBalance returned empty result")
+	}
+
+	return out, nil
 }
 
 func (p *Provider) GetAccountInfo(ctx context.Context, pubkey solana.PublicKey) (*rpc.GetAccountInfoResult, error) {
@@ -123,13 +137,28 @@ func (p *Provider) GetProgramAccounts(
 	programID solana.PublicKey,
 	opts *rpc.GetProgramAccountsOpts,
 ) (rpc.GetProgramAccountsResult, error) {
-	return p.rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
+	accounts, err := p.rpcClient.GetProgramAccountsWithOpts(ctx, programID, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, account := range accounts {
+		if account == nil || account.Account == nil || account.Account.Data == nil {
+			return nil, fmt.Errorf("getProgramAccounts returned empty entry at index %d", i)
+		}
+	}
+
+	return accounts, nil
 }
 
 func (p *Provider) GetLatestBlockhash(ctx context.Context) (solana.Hash, error) {
 	res, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
 		return solana.Hash{}, err
+	}
+
+	if res == nil || res.Value == nil {
+		return solana.Hash{}, errors.New("getLatestBlockhash returned empty result")
 	}
 
 	return res.Value.Blockhash, nil
@@ -139,6 +168,10 @@ func (p *Provider) GetLatestBlockhashAndExpiry(ctx context.Context) (LatestBlock
 	res, err := p.rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
 		return LatestBlockhashAndExpiry{}, err
+	}
+
+	if res == nil || res.Value == nil {
+		return LatestBlockhashAndExpiry{}, errors.New("getLatestBlockhash returned empty result")
 	}
 
 	return LatestBlockhashAndExpiry{
@@ -171,7 +204,7 @@ func (p *Provider) GetBlock(ctx context.Context, slot uint64) (*rpc.GetBlockResu
 }
 
 func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) (solana.Signature, error) {
-	return p.rpcClient.SendTransactionWithOpts(
+	sig, err := p.rpcClient.SendTransactionWithOpts(
 		ctx,
 		tx,
 		rpc.TransactionOpts{
@@ -179,6 +212,15 @@ func (p *Provider) SendTransaction(ctx context.Context, tx *solana.Transaction) 
 			PreflightCommitment: rpc.CommitmentConfirmed,
 		},
 	)
+	if err != nil {
+		return solana.Signature{}, err
+	}
+
+	if sig.IsZero() {
+		return solana.Signature{}, errors.New("sendTransaction returned empty signature")
+	}
+
+	return sig, nil
 }
 
 func (p *Provider) GetSignatureStatus(
@@ -206,13 +248,24 @@ func (p *Provider) GetTransaction(
 
 func (p *Provider) GetSignaturesForAddress(
 	ctx context.Context, address solana.PublicKey, limit int) ([]*rpc.TransactionSignature, error) {
-	return p.rpcClient.GetSignaturesForAddressWithOpts(
+	signatures, err := p.rpcClient.GetSignaturesForAddressWithOpts(
 		ctx,
 		address,
 		&rpc.GetSignaturesForAddressOpts{
 			Limit: &limit,
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, signature := range signatures {
+		if signature == nil {
+			return nil, fmt.Errorf("getSignaturesForAddress returned empty entry at index %d", i)
+		}
+	}
+
+	return signatures, nil
 }
 
 func (p *Provider) GetAddressLookupTable(
@@ -236,13 +289,22 @@ func (p *Provider) SimulateTransaction(
 	ctx context.Context,
 	tx *solana.Transaction,
 ) (*rpc.SimulateTransactionResponse, error) {
-	return p.rpcClient.SimulateTransactionWithOpts(
+	out, err := p.rpcClient.SimulateTransactionWithOpts(
 		ctx,
 		tx,
 		&rpc.SimulateTransactionOpts{
 			SigVerify: false,
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	if out == nil || out.Value == nil {
+		return nil, errors.New("simulateTransaction returned empty result")
+	}
+
+	return out, nil
 }
 
 func (p *Provider) WaitForSignature(
@@ -283,5 +345,14 @@ func (p *Provider) RequestSolAirdrop(
 	address solana.PublicKey,
 	amount uint64,
 ) (solana.Signature, error) {
-	return p.rpcClient.RequestAirdrop(ctx, address, amount, rpc.CommitmentFinalized)
+	sig, err := p.rpcClient.RequestAirdrop(ctx, address, amount, rpc.CommitmentFinalized)
+	if err != nil {
+		return solana.Signature{}, err
+	}
+
+	if sig.IsZero() {
+		return solana.Signature{}, errors.New("requestAirdrop returned empty signature")
+	}
+
+	return sig, nil
 }

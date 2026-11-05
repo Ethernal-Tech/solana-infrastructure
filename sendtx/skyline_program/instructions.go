@@ -33,6 +33,8 @@ func NewBridgeRequestInstruction(
 	associatedTokenProgramAccount solanago.PublicKey,
 	feeConfigAccount solanago.PublicKey,
 	treasuryAccount solanago.PublicKey,
+	eventAuthorityAccount solanago.PublicKey,
+	programAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
 	enc__ := binary.NewBorshEncoder(buf__)
@@ -115,6 +117,10 @@ func NewBridgeRequestInstruction(
 		// Account 11 "treasury": Writable, Non-signer, Required
 		// Treasury — receives operational fee immediately
 		accounts__.Append(solanago.NewAccountMeta(treasuryAccount, true, false))
+		// Account 12 "event_authority": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(eventAuthorityAccount, false, false))
+		// Account 13 "program": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(programAccount, false, false))
 	}
 
 	// Create the instruction.
@@ -135,6 +141,8 @@ func NewBridgeTransactionInstruction(
 	systemProgramAccount solanago.PublicKey,
 	associatedTokenProgramAccount solanago.PublicKey,
 	instructionsAccount solanago.PublicKey,
+	eventAuthorityAccount solanago.PublicKey,
+	programAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
 	enc__ := binary.NewBorshEncoder(buf__)
@@ -173,6 +181,10 @@ func NewBridgeTransactionInstruction(
 		// Account 6 "instructions": Read-only, Non-signer, Required, Address: Sysvar1nstructions1111111111111111111111111
 		// Instructions sysvar used to read and validate the preceding ed25519 ix.
 		accounts__.Append(solanago.NewAccountMeta(instructionsAccount, false, false))
+		// Account 7 "event_authority": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(eventAuthorityAccount, false, false))
+		// Account 8 "program": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(programAccount, false, false))
 	}
 
 	// Create the instruction.
@@ -259,6 +271,8 @@ func NewHotWalletIncrementInstruction(
 	tokenProgramAccount solanago.PublicKey,
 	systemProgramAccount solanago.PublicKey,
 	associatedTokenProgramAccount solanago.PublicKey,
+	eventAuthorityAccount solanago.PublicKey,
+	programAccount solanago.PublicKey,
 ) (solanago.Instruction, error) {
 	buf__ := new(bytes.Buffer)
 	enc__ := binary.NewBorshEncoder(buf__)
@@ -309,6 +323,10 @@ func NewHotWalletIncrementInstruction(
 		// Account 7 "associated_token_program": Read-only, Non-signer, Required, Address: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
 		// Associated token program — required for ATA creation CPI.
 		accounts__.Append(solanago.NewAccountMeta(associatedTokenProgramAccount, false, false))
+		// Account 8 "event_authority": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(eventAuthorityAccount, false, false))
+		// Account 9 "program": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(programAccount, false, false))
 	}
 
 	// Create the instruction.
