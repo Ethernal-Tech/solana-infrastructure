@@ -23,19 +23,26 @@ import (
 )
 
 const (
-	// devnetEndpoint is the public Solana devnet node every probe runs against.
+	// devnetEndpoint is the public Solana devnet node the devnet probe runs against.
 	devnetEndpoint = "https://api.devnet.solana.com"
 
-	// envRunDevnetLimits gates the probe: it spends a real, shared, public node's
-	// whole request budget and then keeps asking, one method at a time, until the
-	// node refuses. It never runs by default.
-	//   go test ./common/... -run TestDevnetRPCMethodLimits -v -timeout 20m
-	envRunDevnetLimits = "SOLANA_DEVNET_RATE_LIMIT_TEST"
+	// mainnetEndpoint is the public Solana mainnet node the mainnet probe runs
+	// against. Its free tier sends the same X-Ratelimit-* headers and refusal
+	// texts as devnet, so one probe reads both.
+	mainnetEndpoint = "https://api.mainnet-beta.solana.com"
 
-	// envIncludeAirdrop additionally enables the requestAirdrop probe. It is off
-	// by default because the public faucet allows a single airdrop per window
-	// per IP, so hammering it only burns a shared resource and measures the
-	// faucet rather than our limiter.
+	// envRunDevnetLimits and envRunMainnetLimits gate the probes: each spends a
+	// real, shared, public node's whole request budget and then keeps asking, one
+	// method at a time, until the node refuses. They never run by default.
+	//   go test ./common/... -run TestDevnetRPCMethodLimits -v -timeout 20m
+	//   go test ./common/... -run TestMainnetRPCMethodLimits -v -timeout 20m
+	envRunDevnetLimits  = "SOLANA_DEVNET_RATE_LIMIT_TEST"
+	envRunMainnetLimits = "SOLANA_MAINNET_RATE_LIMIT_TEST"
+
+	// envIncludeAirdrop additionally enables the requestAirdrop probe on devnet.
+	// It is off by default because the public faucet allows a single airdrop per
+	// window per IP, so hammering it only burns a shared resource and measures the
+	// faucet rather than our limiter. Mainnet has no faucet, so it never runs there.
 	envIncludeAirdrop = "SOLANA_DEVNET_RATE_LIMIT_TEST_AIRDROP"
 
 	headerMethodLimit     = "X-Ratelimit-Method-Limit"
@@ -49,9 +56,9 @@ const (
 	// that happened to be asking.
 	errTextMethodLimit = "Too many requests for a specific RPC call"
 
-	// devnetBlockLookback is how far behind the finalized slot the probe looks
-	// for a block that is guaranteed to exist (not skipped).
-	devnetBlockLookback = 10
+	// blockLookback is how far behind the finalized slot the probe looks for a
+	// block that is guaranteed to exist (not skipped).
+	blockLookback = 10
 
 	// probeWindow is the window every probe works in, because it is the window the
 	// node counts requests per IP over: 100 in total, and fewer per method.
@@ -74,7 +81,7 @@ const (
 	interMethodPause = 15 * time.Second
 )
 
-// devnetLimitsConfig is the configuration under test.
+// devnetLimitsConfig is the configuration TestDevnetRPCMethodLimits checks.
 var devnetLimitsConfig = &RPCMethodLimitsConfig{
 	GlobalRPSLimit:          7,
 	GetBalance:              38,
@@ -92,6 +99,38 @@ var devnetLimitsConfig = &RPCMethodLimitsConfig{
 	GetBlocks:               40,
 	GetBlock:                6,
 	GetBlockHeight:          40,
+}
+
+// mainnetLimitsConfig is the configuration TestMainnetRPCMethodLimits checks.
+// RequestAirdrop is never probed: mainnet has no faucet.
+var mainnetLimitsConfig = &RPCMethodLimitsConfig{
+	GlobalRPSLimit:          7,
+	GetBalance:              38,
+	GetTokenAccountBalance:  40,
+	GetAccountInfo:          40,
+	GetProgramAccounts:      10,
+	GetLatestBlockhash:      40,
+	GetSlot:                 40,
+	SendTransaction:         20,
+	GetSignatureStatuses:    10,
+	SimulateTransaction:     40,
+	RequestAirdrop:          0,
+	GetTransaction:          10,
+	GetSignaturesForAddress: 10,
+	GetBlocks:               40,
+	GetBlock:                6,
+	GetBlockHeight:          40,
+}
+
+// probeNetwork is one public cluster the probe runs against.
+type probeNetwork struct {
+	name     string                 // cluster name in logs and skip messages
+	endpoint string                 // public JSON-RPC endpoint
+	runEnv   string                 // env variable that has to be set for the probe to run
+	config   *RPCMethodLimitsConfig // configuration under test
+
+	// airdropSkip, when set, is why requestAirdrop is not probed.
+	airdropSkip string
 }
 
 // refusal is what the node said when it turned a request down.
@@ -301,9 +340,9 @@ func isMethodLimitRefusal(err error) bool {
 	return strings.Contains(refusalMessage(err), errTextMethodLimit)
 }
 
-// devnetFixtures holds the real devnet values the probes send as parameters, so
-// every method gets a genuine response instead of an "invalid params" error.
-type devnetFixtures struct {
+// probeFixtures holds the real on-chain values the probes send as parameters,
+// so every method gets a genuine response instead of an "invalid params" error.
+type probeFixtures struct {
 	account      solana.PublicKey // a real, funded account
 	tokenAccount solana.PublicKey // a real SPL token account (zero when undiscoverable)
 	signature    solana.Signature // a real, finalized transaction signature
@@ -311,10 +350,10 @@ type devnetFixtures struct {
 	unfundedTx   *solana.Transaction
 }
 
-// devnetMethodCase describes one probe: which method it drives, the limit the
+// methodCase describes one probe: which method it drives, the limit the
 // configuration puts on it, and how to call it with real parameters. call
 // returns a short description of the response for the log.
-type devnetMethodCase struct {
+type methodCase struct {
 	method     string
 	limit      int
 	skipReason string
@@ -352,7 +391,42 @@ type methodProbeResult struct {
 }
 
 // TestDevnetRPCMethodLimits checks the per-method limits in devnetLimitsConfig
-// against the ones the public devnet node actually enforces.
+// against the ones the public devnet node actually enforces. See
+// runRPCMethodLimitsProbe for how.
+func TestDevnetRPCMethodLimits(t *testing.T) {
+	runRPCMethodLimitsProbe(t, probeNetwork{
+		name:     "devnet",
+		endpoint: devnetEndpoint,
+		runEnv:   envRunDevnetLimits,
+		config:   devnetLimitsConfig,
+		airdropSkip: func() string {
+			if os.Getenv(envIncludeAirdrop) != "" {
+				return ""
+			}
+
+			return fmt.Sprintf(
+				"set %s=1 to probe requestAirdrop: the public faucet allows one airdrop per window per IP, "+
+					"so this measures the faucet rather than the client limiter", envIncludeAirdrop)
+		}(),
+	})
+}
+
+// TestMainnetRPCMethodLimits checks the per-method limits in mainnetLimitsConfig
+// against the ones the public mainnet node actually enforces. See
+// runRPCMethodLimitsProbe for how. sendTransaction and simulateTransaction use
+// an unfunded throwaway payer, so nothing lands on chain and no SOL is spent.
+func TestMainnetRPCMethodLimits(t *testing.T) {
+	runRPCMethodLimitsProbe(t, probeNetwork{
+		name:        "mainnet",
+		endpoint:    mainnetEndpoint,
+		runEnv:      envRunMainnetLimits,
+		config:      mainnetLimitsConfig,
+		airdropSkip: "mainnet has no faucet, so requestAirdrop is not probed",
+	})
+}
+
+// runRPCMethodLimitsProbe checks the per-method limits in network.config
+// against the ones the network's public node actually enforces.
 //
 // Every method gets perMethodProbeRequests requests inside one window - past
 // every per-method limit the node has - and the refusal that comes back names
@@ -368,29 +442,31 @@ type methodProbeResult struct {
 // the per-method limiter is configured at or below what the node allows and
 // retries a 429 internally, so a caller going through it is never refused and
 // there would be no reported limit to read.
-func TestDevnetRPCMethodLimits(t *testing.T) {
-	if os.Getenv(envRunDevnetLimits) == "" {
-		t.Skipf("set %s=1 to run the devnet rate limit probe (it spends a public node's request budget)",
-			envRunDevnetLimits)
+func runRPCMethodLimitsProbe(t *testing.T, network probeNetwork) {
+	t.Helper()
+
+	if os.Getenv(network.runEnv) == "" {
+		t.Skipf("set %s=1 to run the %s rate limit probe (it spends a public node's request budget)",
+			network.runEnv, network.name)
 	}
 
 	logger := hclog.New(&hclog.LoggerOptions{
-		Name:   "devnet-probe",
+		Name:   network.name + "-probe",
 		Level:  hclog.Warn,
 		Output: testLogWriter{t: t},
 	})
 
-	transport := newRateLimitStatsTransport(devnetHTTPTransport(), logger)
-	rpcClient := newDevnetRPCClient(transport, probeRPSLimit)
+	transport := newRateLimitStatsTransport(probeHTTPTransport(), logger)
+	rpcClient := newProbeRPCClient(network.endpoint, transport, probeRPSLimit)
 
 	setupCtx, cancelSetup := context.WithTimeout(context.Background(), time.Minute)
 	defer cancelSetup()
 
-	fixtures := discoverDevnetFixtures(t, setupCtx, rpcClient)
-	t.Logf("fixtures: account=%s tokenAccount=%s signature=%s blockSlot=%d",
+	fixtures := discoverFixtures(t, setupCtx, rpcClient)
+	t.Logf("%s fixtures: account=%s tokenAccount=%s signature=%s blockSlot=%d", network.name,
 		fixtures.account, fixtures.tokenAccount, fixtures.signature, fixtures.blockSlot)
 
-	cases := devnetMethodCases(devnetLimitsConfig, fixtures)
+	cases := methodCases(network.config, fixtures, network.airdropSkip)
 	results := make([]methodProbeResult, 0, len(cases))
 
 	// Discovering the fixtures spent requests out of the window the first probe is
@@ -427,7 +503,7 @@ func TestDevnetRPCMethodLimits(t *testing.T) {
 // asking for the whole window and looks for the refusal it came for.
 func probeMethodLimit(
 	t *testing.T,
-	testCase devnetMethodCase,
+	testCase methodCase,
 	client *rpc.Client,
 	transport *rateLimitStatsTransport,
 ) methodProbeResult {
@@ -622,11 +698,12 @@ func logProbeSummary(t *testing.T, results []methodProbeResult) {
 	}
 }
 
-// devnetMethodCases builds one probe per rate limited method. Every call uses
-// real devnet data; the ones that would change state (sendTransaction,
+// methodCases builds one probe per rate limited method. Every call uses real
+// on-chain data; the ones that would change state (sendTransaction,
 // simulateTransaction) use a throwaway key with no lamports, so the node always
-// rejects them and nothing ever lands on chain.
-func devnetMethodCases(config *RPCMethodLimitsConfig, fixtures devnetFixtures) []devnetMethodCase {
+// rejects them and nothing ever lands on chain. requestAirdrop is skipped with
+// airdropSkip when that is set.
+func methodCases(config *RPCMethodLimitsConfig, fixtures probeFixtures, airdropSkip string) []methodCase {
 	var (
 		maxTxVersion    = uint64(0)
 		signatureLimit  = 1
@@ -635,14 +712,7 @@ func devnetMethodCases(config *RPCMethodLimitsConfig, fixtures devnetFixtures) [
 		dataSliceOffset = uint64(0)
 	)
 
-	airdropSkip := ""
-	if os.Getenv(envIncludeAirdrop) == "" {
-		airdropSkip = fmt.Sprintf(
-			"set %s=1 to probe requestAirdrop: the public faucet allows one airdrop per window per IP, "+
-				"so this measures the faucet rather than the client limiter", envIncludeAirdrop)
-	}
-
-	return []devnetMethodCase{
+	return []methodCase{
 		{
 			method: rpcMethodGetBalance,
 			limit:  config.GetBalance,
@@ -839,7 +909,7 @@ func devnetMethodCases(config *RPCMethodLimitsConfig, fixtures devnetFixtures) [
 			call: func(ctx context.Context, client *rpc.Client) (string, error) {
 				endSlot := fixtures.blockSlot
 
-				result, err := client.GetBlocks(ctx, endSlot-devnetBlockLookback, &endSlot, rpc.CommitmentFinalized)
+				result, err := client.GetBlocks(ctx, endSlot-blockLookback, &endSlot, rpc.CommitmentFinalized)
 				if err != nil {
 					return "", err
 				}
@@ -880,15 +950,15 @@ func devnetMethodCases(config *RPCMethodLimitsConfig, fixtures devnetFixtures) [
 	}
 }
 
-// discoverDevnetFixtures reads the values the probes need out of devnet itself,
-// so the test never depends on hardcoded accounts that may disappear.
-func discoverDevnetFixtures(t *testing.T, ctx context.Context, client *rpc.Client) devnetFixtures {
+// discoverFixtures reads the values the probes need out of the probed cluster
+// itself, so the test never depends on hardcoded accounts that may disappear.
+func discoverFixtures(t *testing.T, ctx context.Context, client *rpc.Client) probeFixtures {
 	t.Helper()
 
 	slot, err := client.GetSlot(ctx, rpc.CommitmentFinalized)
 	require.NoError(t, err)
 
-	blocks, err := client.GetBlocks(ctx, slot-devnetBlockLookback, &slot, rpc.CommitmentFinalized)
+	blocks, err := client.GetBlocks(ctx, slot-blockLookback, &slot, rpc.CommitmentFinalized)
 	require.NoError(t, err)
 	require.NotEmpty(t, blocks)
 
@@ -902,7 +972,7 @@ func discoverDevnetFixtures(t *testing.T, ctx context.Context, client *rpc.Clien
 	require.NoError(t, err)
 	require.NotEmpty(t, signatures)
 
-	fixtures := devnetFixtures{
+	fixtures := probeFixtures{
 		account:    solana.SystemProgramID,
 		signature:  signatures[0].Signature,
 		blockSlot:  blocks[len(blocks)-1],
@@ -964,7 +1034,7 @@ func tokenAccountFromTransaction(
 // buildUnfundedTransaction signs a 1 lamport transfer from a throwaway key that
 // holds nothing. The node rejects it in preflight and in simulation, which is
 // what the sendTransaction and simulateTransaction probes want: real responses,
-// no state change, no devnet funds spent.
+// no state change, no funds spent.
 func buildUnfundedTransaction(t *testing.T, ctx context.Context, client *rpc.Client) *solana.Transaction {
 	t.Helper()
 
@@ -995,28 +1065,19 @@ func buildUnfundedTransaction(t *testing.T, ctx context.Context, client *rpc.Cli
 	return transaction
 }
 
-// devnetHTTPTransport mirrors the transport NewRateLimitedRPCClient builds, so
-// the probe measures the same HTTP behaviour production uses.
-func devnetHTTPTransport() http.RoundTripper {
-	return &http.Transport{
-		IdleConnTimeout:       defaultHTTPTimeout,
-		MaxIdleConns:          defaultMaxIdleConnsPerHost,
-		MaxConnsPerHost:       defaultMaxIdleConnsPerHost,
-		MaxIdleConnsPerHost:   defaultMaxIdleConnsPerHost,
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-	}
+// probeHTTPTransport is the transport NewRateLimitedRPCClient builds, so the
+// probe measures the same HTTP and TLS behaviour production uses.
+func probeHTTPTransport() http.RoundTripper {
+	return newRPCHTTPTransport()
 }
 
-func newDevnetRPCClient(transport http.RoundTripper, globalRPS int) *rpc.Client {
+func newProbeRPCClient(endpoint string, transport http.RoundTripper, globalRPS int) *rpc.Client {
 	httpClient := &http.Client{
 		Timeout:   defaultHTTPTimeout,
 		Transport: transport,
 	}
 
-	jsonRPCClient := jsonrpc.NewClientWithOpts(devnetEndpoint, &jsonrpc.RPCClientOpts{
+	jsonRPCClient := jsonrpc.NewClientWithOpts(endpoint, &jsonrpc.RPCClientOpts{
 		HTTPClient: httpClient,
 	})
 
