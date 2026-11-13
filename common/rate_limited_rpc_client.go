@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net"
@@ -180,16 +181,25 @@ const (
 	defaultMaxIdleConnsPerHost = 100
 )
 
-// NewRateLimitedRPCClient creates a Solana RPC client equivalent to
-// rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(endpoint, rps)), but with an
-// HTTP transport that logs the X-Ratelimit-*/Retry-After response headers
-// whenever the node responds with 429. A nil logger falls back to hclog.Default().
+// rpcTLSCurvePreferences is the key exchange list every RPC connection offers.
 //
-// When apiKey is non-empty it is appended to the endpoint as the "api_key"
-// query parameter (e.g. for OrbitFlare endpoints); pass "" for endpoints that
-// do not require a key or that already embed credentials in the URL.
-func NewRateLimitedRPCClient(endpoint string, rps int, logger hclog.Logger) *rpc.Client {
-	transport := &http.Transport{
+// Go 1.26 started offering three hybrid post-quantum groups by default
+// (X25519MLKEM768, SecP256r1MLKEM768 and SecP384r1MLKEM1024), and
+// api.mainnet-beta.solana.com refuses every request on a connection whose
+// ClientHello offers all three with 403 "Your IP or provider is blocked from this
+// endpoint". Any two of them are accepted, and devnet accepts all three. Keeping
+// X25519MLKEM768, the hybrid every major TLS stack negotiates, retains
+// post-quantum key exchange where the node supports it.
+var rpcTLSCurvePreferences = []tls.CurveID{
+	tls.X25519MLKEM768,
+	tls.X25519,
+	tls.CurveP256,
+	tls.CurveP384,
+}
+
+// newRPCHTTPTransport builds the HTTP transport every RPC client uses.
+func newRPCHTTPTransport() *http.Transport {
+	return &http.Transport{
 		IdleConnTimeout:     defaultHTTPTimeout,
 		MaxIdleConns:        defaultMaxIdleConnsPerHost,
 		MaxConnsPerHost:     defaultMaxIdleConnsPerHost,
@@ -199,16 +209,30 @@ func NewRateLimitedRPCClient(endpoint string, rps int, logger hclog.Logger) *rpc
 			Timeout:   defaultHTTPTimeout,
 			KeepAlive: defaultHTTPKeepAlive,
 		}).DialContext,
+		TLSClientConfig: &tls.Config{
+			MinVersion:       tls.VersionTLS12,
+			CurvePreferences: rpcTLSCurvePreferences,
+		},
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second, // Force-kill un-responsive handshakes early
 		DisableKeepAlives:     false,
 	}
+}
 
+// NewRateLimitedRPCClient creates a Solana RPC client equivalent to
+// rpc.NewWithCustomRPCClient(rpc.NewWithRateLimit(endpoint, rps)), but with an
+// HTTP transport that logs the X-Ratelimit-*/Retry-After response headers
+// whenever the node responds with 429. A nil logger falls back to hclog.Default().
+//
+// When apiKey is non-empty it is appended to the endpoint as the "api_key"
+// query parameter (e.g. for OrbitFlare endpoints); pass "" for endpoints that
+// do not require a key or that already embed credentials in the URL.
+func NewRateLimitedRPCClient(endpoint string, rps int, logger hclog.Logger) *rpc.Client {
 	httpClient := &http.Client{
 		Timeout: defaultHTTPTimeout,
 		Transport: &RateLimitLoggingTransport{
-			Base:   transport,
+			Base:   newRPCHTTPTransport(),
 			Logger: logger,
 		},
 	}
