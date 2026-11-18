@@ -161,6 +161,17 @@ type UpdateProgramVersionDto struct {
 	VersionString string
 }
 
+// SetAuthorityDto rotates the bridge admin (FeeConfig.authority and
+// ProgramConfig.authority) in one instruction.
+type SetAuthorityDto struct {
+	ProgramID solana.PublicKey
+	// AuthorityAddr is the current authority, a signer.
+	AuthorityAddr string
+	// NewAuthorityAddr is the incoming authority; it co-signs the transaction,
+	// so it must be an on-curve key, not a PDA.
+	NewAuthorityAddr string
+}
+
 type SOLTransferDto struct {
 	SenderPublicKey   string
 	ReceiverPublicKey string

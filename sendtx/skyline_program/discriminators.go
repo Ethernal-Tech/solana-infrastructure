@@ -15,6 +15,7 @@ var (
 
 // Event discriminators
 var (
+	Event_AuthorityChangedEvent          = [8]byte{85, 105, 159, 188, 6, 44, 52, 28}
 	Event_BridgeRequestEvent             = [8]byte{162, 122, 193, 76, 126, 59, 162, 143}
 	Event_FeeConfigUpdatedEvent          = [8]byte{139, 188, 235, 116, 222, 55, 95, 201}
 	Event_HotWalletIncrementEvent        = [8]byte{59, 172, 72, 125, 228, 239, 221, 175}
@@ -35,6 +36,7 @@ var (
 	Instruction_Initialize              = [8]byte{175, 175, 109, 31, 13, 152, 155, 237}
 	Instruction_RegisterLockUnlockToken = [8]byte{102, 136, 172, 174, 201, 166, 219, 233}
 	Instruction_RegisterMintBurnToken   = [8]byte{20, 106, 92, 113, 59, 41, 253, 128}
+	Instruction_SetAuthority            = [8]byte{133, 250, 37, 21, 110, 163, 26, 121}
 	Instruction_UpdateFeeConfig         = [8]byte{104, 184, 103, 242, 88, 151, 107, 20}
 	Instruction_UpdateMinBridgingAmount = [8]byte{154, 223, 132, 123, 178, 94, 16, 41}
 	Instruction_UpdateProgramVersion    = [8]byte{235, 132, 215, 225, 213, 43, 43, 38}
