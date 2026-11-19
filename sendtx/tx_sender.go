@@ -318,6 +318,18 @@ func (txSnd *TxSender) buildInstructions(
 		}
 
 		return []solana.Instruction{updateProgramVersionIx}, nil
+	case InstructionTypeSetAuthority:
+		tx, ok := txDto.(SetAuthorityDto)
+		if !ok {
+			return nil, fmt.Errorf("expected SetAuthorityDto for type %s, got %T", instructionType, txDto)
+		}
+
+		setAuthorityIx, err := txSnd.buildSetAuthorityInstruction(tx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build set authority instruction: %w", err)
+		}
+
+		return []solana.Instruction{setAuthorityIx}, nil
 	case InstructionTypeSOLTransfer:
 		tx, ok := txDto.(SOLTransferDto)
 		if !ok {
@@ -1284,6 +1296,62 @@ func (txSnd *TxSender) buildUpdateProgramVersionInstruction(
 	}
 
 	return withProgramID(updateIx, programID)
+}
+
+func (txSnd *TxSender) buildSetAuthorityInstruction(tx SetAuthorityDto) (solana.Instruction, error) {
+	if err := requireBridgeProgramID(tx.ProgramID); err != nil {
+		return nil, err
+	}
+
+	// both the current and the new authority sign the instruction, so both must
+	// be on-curve: a PDA cannot sign a transaction.
+	if err := wallet.ValidateAddress(tx.AuthorityAddr, false); err != nil {
+		return nil, fmt.Errorf("invalid authority address: %s: %w", tx.AuthorityAddr, err)
+	}
+
+	if err := wallet.ValidateAddress(tx.NewAuthorityAddr, false); err != nil {
+		return nil, fmt.Errorf("invalid new authority address: %s: %w", tx.NewAuthorityAddr, err)
+	}
+
+	authorityPubKey, err := wallet.PublicKeyFromAddress(tx.AuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse authority public key from address %s: %w", tx.AuthorityAddr, err)
+	}
+
+	newAuthorityPubKey, err := wallet.PublicKeyFromAddress(tx.NewAuthorityAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse new authority public key from address %s: %w",
+			tx.NewAuthorityAddr, err)
+	}
+
+	if newAuthorityPubKey.IsZero() {
+		return nil, fmt.Errorf("new authority must not be the default (all zero) address")
+	}
+
+	if newAuthorityPubKey == authorityPubKey {
+		return nil, fmt.Errorf("new authority must differ from the current authority")
+	}
+
+	if err := txSnd.instructionConfig.ApplyOptions(
+		WithProgramID(tx.ProgramID),
+		WithFeeConfigPDA(),
+		WithProgramConfigPDA(),
+	); err != nil {
+		return nil, fmt.Errorf("failed to apply additional config options: %w", err)
+	}
+
+	setIx, err := skyline_program.NewSetAuthorityInstruction(
+		newAuthorityPubKey,
+		authorityPubKey,
+		txSnd.instructionConfig.feeConfigPDA,
+		txSnd.instructionConfig.programConfigPDA,
+		newAuthorityPubKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build set authority instruction: %w", err)
+	}
+
+	return withProgramID(setIx, tx.ProgramID)
 }
 
 func (txSnd *TxSender) buildTransferInstruction(tx SOLTransferDto) (solana.Instruction, error) {

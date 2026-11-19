@@ -11,6 +11,70 @@ import (
 	solanago "github.com/gagliardetto/solana-go"
 )
 
+// Emitted when the bridge admin is rotated by `set_authority`.
+type AuthorityChangedEvent struct {
+	// Authority that signed the rotation.
+	OldAuthority solanago.PublicKey `json:"oldAuthority"`
+
+	// Authority now stored on `FeeConfig` and `ProgramConfig`.
+	NewAuthority solanago.PublicKey `json:"newAuthority"`
+}
+
+func (obj AuthorityChangedEvent) MarshalWithEncoder(encoder *binary.Encoder) (err error) {
+	// Serialize `OldAuthority`:
+	err = encoder.Encode(obj.OldAuthority)
+	if err != nil {
+		return errors.NewField("OldAuthority", err)
+	}
+	// Serialize `NewAuthority`:
+	err = encoder.Encode(obj.NewAuthority)
+	if err != nil {
+		return errors.NewField("NewAuthority", err)
+	}
+	return nil
+}
+
+func (obj AuthorityChangedEvent) Marshal() ([]byte, error) {
+	buf := bytes.NewBuffer(nil)
+	encoder := binary.NewBorshEncoder(buf)
+	err := obj.MarshalWithEncoder(encoder)
+	if err != nil {
+		return nil, fmt.Errorf("error while encoding AuthorityChangedEvent: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (obj *AuthorityChangedEvent) UnmarshalWithDecoder(decoder *binary.Decoder) (err error) {
+	// Deserialize `OldAuthority`:
+	err = decoder.Decode(&obj.OldAuthority)
+	if err != nil {
+		return errors.NewField("OldAuthority", err)
+	}
+	// Deserialize `NewAuthority`:
+	err = decoder.Decode(&obj.NewAuthority)
+	if err != nil {
+		return errors.NewField("NewAuthority", err)
+	}
+	return nil
+}
+
+func (obj *AuthorityChangedEvent) Unmarshal(buf []byte) error {
+	err := obj.UnmarshalWithDecoder(binary.NewBorshDecoder(buf))
+	if err != nil {
+		return fmt.Errorf("error while unmarshaling AuthorityChangedEvent: %w", err)
+	}
+	return nil
+}
+
+func UnmarshalAuthorityChangedEvent(buf []byte) (*AuthorityChangedEvent, error) {
+	obj := new(AuthorityChangedEvent)
+	err := obj.Unmarshal(buf)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
 // Event emitted when a bridge request is created.
 //
 // This event is emitted when a user initiates a cross-chain token transfer.

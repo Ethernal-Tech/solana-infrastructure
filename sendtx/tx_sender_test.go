@@ -2,7 +2,9 @@ package sendtx
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"math/big"
 	"testing"
 
 	"github.com/Ethernal-Tech/solana-infrastructure/common"
@@ -2727,4 +2729,256 @@ func TestBuildBatchedEd25519Instruction(t *testing.T) {
 		_, err := txSnd.buildBatchedEd25519Instruction(signaturePairs(256), payload)
 		require.ErrorContains(t, err, "too many signature pairs: 256")
 	})
+}
+
+func TestSetAuthority(t *testing.T) {
+	ctx := context.Background()
+
+	newSender := func() *TxSender {
+		return NewTxSender(new(wallet.MockTxProvider), &ChainConfig{})
+	}
+
+	randomKey := func(t *testing.T) solana.PublicKey {
+		t.Helper()
+
+		key, err := solana.NewRandomPrivateKey()
+		require.NoError(t, err)
+
+		return key.PublicKey()
+	}
+
+	pdaFor := func(t *testing.T, programID solana.PublicKey, seed []byte) solana.PublicKey {
+		t.Helper()
+
+		pda, _, err := solana.FindProgramAddress([][]byte{seed}, programID)
+		require.NoError(t, err)
+
+		return pda
+	}
+
+	t.Run("success", func(t *testing.T) {
+		programID := randomKey(t)
+		feePayer := randomKey(t)
+		authority := randomKey(t)
+		newAuthority := randomKey(t)
+
+		tx, err := newSender().CreateTx(ctx, feePayer, InstructionTypeSetAuthority, solana.Hash{}, SetAuthorityDto{
+			ProgramID:        programID,
+			AuthorityAddr:    authority.String(),
+			NewAuthorityAddr: newAuthority.String(),
+		})
+		require.NoError(t, err)
+		require.Len(t, tx.Message.Instructions, 1)
+
+		ix := tx.Message.Instructions[0]
+		keys := tx.Message.AccountKeys
+
+		require.Equal(t, programID, keys[ix.ProgramIDIndex])
+		require.Len(t, ix.Data, 40)
+		require.Equal(t, skyline_program.Instruction_SetAuthority[:], []byte(ix.Data[:8]))
+		require.Equal(t, newAuthority.Bytes(), []byte(ix.Data[8:]))
+
+		require.Len(t, ix.Accounts, 4)
+
+		feeConfig := pdaFor(t, programID, skyline_program.FEE_CONFIG_SEED)
+		programConfig := pdaFor(t, programID, skyline_program.PROGRAM_CONFIG_SEED)
+
+		require.Equal(t, authority, keys[ix.Accounts[0]])
+		require.Equal(t, feeConfig, keys[ix.Accounts[1]])
+		require.Equal(t, programConfig, keys[ix.Accounts[2]])
+		require.Equal(t, newAuthority, keys[ix.Accounts[3]])
+
+		require.True(t, tx.Message.IsSigner(authority))
+		require.False(t, isWritable(t, tx, authority))
+		require.True(t, tx.Message.IsSigner(newAuthority))
+		require.False(t, isWritable(t, tx, newAuthority))
+		require.True(t, isWritable(t, tx, feeConfig))
+		require.True(t, isWritable(t, tx, programConfig))
+		require.False(t, tx.Message.IsSigner(feeConfig))
+		require.False(t, tx.Message.IsSigner(programConfig))
+	})
+
+	t.Run("invalid addresses", func(t *testing.T) {
+		valid := randomKey(t).String()
+
+		shortB58 := base58Of(t, 31)
+		longB58 := base58Of(t, 33)
+
+		cases := []struct {
+			name      string
+			authority string
+			newAuth   string
+			contains  string
+		}{
+			{"option-like authority", "--final", valid, "invalid authority address"},
+			{"option-like new authority", valid, "--final", "invalid new authority address"},
+			{"empty authority", "", valid, "invalid authority address"},
+			{"empty new authority", valid, "", "invalid new authority address"},
+			{"31 byte authority", shortB58, valid, "invalid authority address"},
+			{"33 byte new authority", valid, longB58, "invalid new authority address"},
+			{"whitespace authority", " " + valid + " ", valid, "invalid authority address"},
+			{"whitespace new authority", valid, valid[:10] + " " + valid[10:], "invalid new authority address"},
+		}
+
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				_, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+					SetAuthorityDto{
+						ProgramID:        randomKey(t),
+						AuthorityAddr:    c.authority,
+						NewAuthorityAddr: c.newAuth,
+					})
+				require.Error(t, err)
+				require.Contains(t, err.Error(), c.contains)
+			})
+		}
+	})
+
+	t.Run("default", func(t *testing.T) {
+		_, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{
+				ProgramID:        randomKey(t),
+				AuthorityAddr:    randomKey(t).String(),
+				NewAuthorityAddr: solana.PublicKey{}.String(),
+			})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "new authority")
+	})
+
+	t.Run("missing program id", func(t *testing.T) {
+		_, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{
+				AuthorityAddr:    randomKey(t).String(),
+				NewAuthorityAddr: randomKey(t).String(),
+			})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "bridge program ID is required")
+	})
+
+	t.Run("wrong dto", func(t *testing.T) {
+		_, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			UpdateProgramVersionDto{ProgramID: randomKey(t)})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "expected SetAuthorityDto")
+	})
+
+	t.Run("legacy message", func(t *testing.T) {
+		tx, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{
+				ProgramID:        randomKey(t),
+				AuthorityAddr:    randomKey(t).String(),
+				NewAuthorityAddr: randomKey(t).String(),
+			})
+		require.NoError(t, err)
+		require.Equal(t, solana.MessageVersionLegacy, tx.Message.GetVersion())
+	})
+
+	t.Run("off-curve addresses", func(t *testing.T) {
+		programID := randomKey(t)
+		offCurve := pdaFor(t, programID, []byte("off-curve"))
+		require.False(t, offCurve.IsOnCurve())
+
+		_, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{
+				ProgramID:        programID,
+				AuthorityAddr:    offCurve.String(),
+				NewAuthorityAddr: randomKey(t).String(),
+			})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid authority address")
+
+		// the new authority co-signs, so a PDA (which cannot sign) is rejected
+		_, err = newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{
+				ProgramID:        programID,
+				AuthorityAddr:    randomKey(t).String(),
+				NewAuthorityAddr: offCurve.String(),
+			})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid new authority address")
+	})
+
+	t.Run("fee payer is new authority", func(t *testing.T) {
+		newAuthority := randomKey(t)
+
+		tx, err := newSender().CreateTx(ctx, newAuthority, InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{
+				ProgramID:        randomKey(t),
+				AuthorityAddr:    randomKey(t).String(),
+				NewAuthorityAddr: newAuthority.String(),
+			})
+		require.NoError(t, err)
+		require.Equal(t, 2, int(tx.Message.Header.NumRequiredSignatures))
+		require.Equal(t, newAuthority, tx.Message.AccountKeys[0])
+		require.True(t, tx.Message.IsSigner(newAuthority))
+	})
+
+	t.Run("same authority", func(t *testing.T) {
+		same := randomKey(t).String()
+
+		_, err := newSender().CreateTx(ctx, randomKey(t), InstructionTypeSetAuthority, solana.Hash{},
+			SetAuthorityDto{ProgramID: randomKey(t), AuthorityAddr: same, NewAuthorityAddr: same})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "differ")
+	})
+
+	t.Run("sender reuse", func(t *testing.T) {
+		sender := newSender()
+		authority := randomKey(t)
+
+		for i := 0; i < 2; i++ {
+			programID := randomKey(t)
+
+			tx, err := sender.CreateTx(ctx, authority, InstructionTypeSetAuthority, solana.Hash{},
+				SetAuthorityDto{
+					ProgramID:        programID,
+					AuthorityAddr:    authority.String(),
+					NewAuthorityAddr: randomKey(t).String(),
+				})
+			require.NoError(t, err)
+
+			ix := tx.Message.Instructions[0]
+			require.Equal(t, programID, tx.Message.AccountKeys[ix.ProgramIDIndex])
+			require.Equal(t, pdaFor(t, programID, skyline_program.FEE_CONFIG_SEED),
+				tx.Message.AccountKeys[ix.Accounts[1]])
+			require.Equal(t, pdaFor(t, programID, skyline_program.PROGRAM_CONFIG_SEED),
+				tx.Message.AccountKeys[ix.Accounts[2]])
+		}
+	})
+}
+
+// base58Of returns the base58 encoding of n random bytes.
+func base58Of(t *testing.T, n int) string {
+	t.Helper()
+
+	buf := make([]byte, n)
+	_, err := rand.Read(buf)
+	require.NoError(t, err)
+
+	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+	// force a non-zero leading byte so the length is not shortened by leading '1's
+	buf[0] |= 0x80
+
+	num := new(big.Int).SetBytes(buf)
+	base := big.NewInt(58)
+	mod := new(big.Int)
+
+	var out []byte
+
+	for num.Sign() > 0 {
+		num.DivMod(num, base, mod)
+		out = append([]byte{alphabet[mod.Int64()]}, out...)
+	}
+
+	return string(out)
+}
+
+func isWritable(t *testing.T, tx *solana.Transaction, key solana.PublicKey) bool {
+	t.Helper()
+
+	writable, err := tx.Message.IsWritable(key)
+	require.NoError(t, err)
+
+	return writable
 }

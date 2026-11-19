@@ -646,6 +646,56 @@ func NewRegisterMintBurnTokenInstruction(
 	), nil
 }
 
+// Builds a "set_authority" instruction.
+// Moves the bridge admin to `new_authority`. //  // Rewrites `FeeConfig.authority` and `ProgramConfig.authority` in one transaction so // every admin-gated instruction follows the new key. The current authority and // the named recipient must both sign. //  // # Arguments // * `new_authority` - Public key that becomes the bridge admin //  // # Errors // * `Unauthorized`       - Signer is not the authority stored on both configs // * `InvalidNewAuthority` - Recipient is the default key, the current authority, or differs from the recipient signer
+func NewSetAuthorityInstruction(
+	// Params:
+	newAuthorityParam solanago.PublicKey,
+
+	// Accounts:
+	authorityAccount solanago.PublicKey,
+	feeConfigAccount solanago.PublicKey,
+	programConfigAccount solanago.PublicKey,
+	newAuthoritySignerAccount solanago.PublicKey,
+) (solanago.Instruction, error) {
+	buf__ := new(bytes.Buffer)
+	enc__ := binary.NewBorshEncoder(buf__)
+
+	// Encode the instruction discriminator.
+	err := enc__.WriteBytes(Instruction_SetAuthority[:], false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
+	}
+	{
+		// Serialize `newAuthorityParam`:
+		err = enc__.Encode(newAuthorityParam)
+		if err != nil {
+			return nil, errors.NewField("newAuthorityParam", err)
+		}
+	}
+	accounts__ := solanago.AccountMetaSlice{}
+
+	// Add the accounts to the instruction.
+	{
+		// Account 0 "authority": Read-only, Signer, Required
+		accounts__.Append(solanago.NewAccountMeta(authorityAccount, false, true))
+		// Account 1 "fee_config": Writable, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(feeConfigAccount, true, false))
+		// Account 2 "program_config": Writable, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(programConfigAccount, true, false))
+		// Account 3 "new_authority_signer": Read-only, Signer, Required
+		// Accepts the role for the public key named in the instruction.
+		accounts__.Append(solanago.NewAccountMeta(newAuthoritySignerAccount, false, true))
+	}
+
+	// Create the instruction.
+	return solanago.NewInstruction(
+		ProgramID,
+		accounts__,
+		buf__.Bytes(),
+	), nil
+}
+
 // Builds a "update_fee_config" instruction.
 // Update the fee configuration for the bridge. //  // This instruction allows the authority to update the fee configuration parameters for the bridge, // including the minimum operational fee, bridge fee, minimum bridging amount, treasury address, and // relayer address. The authority can choose to update any subset of these parameters, and the instruction // will validate the new values and emit an event with the updated configuration. //  // # Arguments // * `ctx` - The context containing accounts for updating the fee configuration // * `min_operational_fee` - Optional new minimum operational fee (lamports) // * `bridge_fee` - Optional new bridge fee (lamports) // * `update_treasury` - Optional flag indicating whether to update the treasury address //  // # Errors // * `InvalidTreasury` - If the new treasury address is invalid
 func NewUpdateFeeConfigInstruction(
