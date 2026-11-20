@@ -36,6 +36,7 @@ var (
 	Instruction_Initialize              = [8]byte{175, 175, 109, 31, 13, 152, 155, 237}
 	Instruction_RegisterLockUnlockToken = [8]byte{102, 136, 172, 174, 201, 166, 219, 233}
 	Instruction_RegisterMintBurnToken   = [8]byte{20, 106, 92, 113, 59, 41, 253, 128}
+	Instruction_RenameMintBurnToken     = [8]byte{74, 38, 187, 51, 1, 251, 222, 141}
 	Instruction_SetAuthority            = [8]byte{133, 250, 37, 21, 110, 163, 26, 121}
 	Instruction_UpdateFeeConfig         = [8]byte{104, 184, 103, 242, 88, 151, 107, 20}
 	Instruction_UpdateMinBridgingAmount = [8]byte{154, 223, 132, 123, 178, 94, 16, 41}
