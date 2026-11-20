@@ -646,6 +646,82 @@ func NewRegisterMintBurnTokenInstruction(
 	), nil
 }
 
+// Builds a "rename_mint_burn_token" instruction.
+// Rename a registered mint/burn token using the vault's metadata update authority.
+func NewRenameMintBurnTokenInstruction(
+	// Params:
+	tokenIdParam uint16,
+	nameParam string,
+	symbolParam string,
+
+	// Accounts:
+	authorityAccount solanago.PublicKey,
+	feeConfigAccount solanago.PublicKey,
+	tokenRegistryAccount solanago.PublicKey,
+	mintAccount solanago.PublicKey,
+	vaultAccount solanago.PublicKey,
+	metadataAccount solanago.PublicKey,
+	metadataProgramAccount solanago.PublicKey,
+	systemProgramAccount solanago.PublicKey,
+	instructionsAccount solanago.PublicKey,
+) (solanago.Instruction, error) {
+	buf__ := new(bytes.Buffer)
+	enc__ := binary.NewBorshEncoder(buf__)
+
+	// Encode the instruction discriminator.
+	err := enc__.WriteBytes(Instruction_RenameMintBurnToken[:], false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write instruction discriminator: %w", err)
+	}
+	{
+		// Serialize `tokenIdParam`:
+		err = enc__.Encode(tokenIdParam)
+		if err != nil {
+			return nil, errors.NewField("tokenIdParam", err)
+		}
+		// Serialize `nameParam`:
+		err = enc__.Encode(nameParam)
+		if err != nil {
+			return nil, errors.NewField("nameParam", err)
+		}
+		// Serialize `symbolParam`:
+		err = enc__.Encode(symbolParam)
+		if err != nil {
+			return nil, errors.NewField("symbolParam", err)
+		}
+	}
+	accounts__ := solanago.AccountMetaSlice{}
+
+	// Add the accounts to the instruction.
+	{
+		// Account 0 "authority": Writable, Signer, Required
+		accounts__.Append(solanago.NewAccountMeta(authorityAccount, true, true))
+		// Account 1 "fee_config": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(feeConfigAccount, false, false))
+		// Account 2 "token_registry": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(tokenRegistryAccount, false, false))
+		// Account 3 "mint": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(mintAccount, false, false))
+		// Account 4 "vault": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(vaultAccount, false, false))
+		// Account 5 "metadata": Writable, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(metadataAccount, true, false))
+		// Account 6 "metadata_program": Read-only, Non-signer, Required, Address: metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+		accounts__.Append(solanago.NewAccountMeta(metadataProgramAccount, false, false))
+		// Account 7 "system_program": Read-only, Non-signer, Required
+		accounts__.Append(solanago.NewAccountMeta(systemProgramAccount, false, false))
+		// Account 8 "instructions": Read-only, Non-signer, Required, Address: Sysvar1nstructions1111111111111111111111111
+		accounts__.Append(solanago.NewAccountMeta(instructionsAccount, false, false))
+	}
+
+	// Create the instruction.
+	return solanago.NewInstruction(
+		ProgramID,
+		accounts__,
+		buf__.Bytes(),
+	), nil
+}
+
 // Builds a "set_authority" instruction.
 // Moves the bridge admin to `new_authority`. //  // Rewrites `FeeConfig.authority` and `ProgramConfig.authority` in one transaction so // every admin-gated instruction follows the new key. The current authority and // the named recipient must both sign. //  // # Arguments // * `new_authority` - Public key that becomes the bridge admin //  // # Errors // * `Unauthorized`       - Signer is not the authority stored on both configs // * `InvalidNewAuthority` - Recipient is the default key, the current authority, or differs from the recipient signer
 func NewSetAuthorityInstruction(
