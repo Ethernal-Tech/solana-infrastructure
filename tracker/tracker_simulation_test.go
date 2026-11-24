@@ -1003,6 +1003,78 @@ func TestEventTracker_StoresBlockhashesForSparseSlots(t *testing.T) {
 		len(thresholdSlots), thresholdSlots, len(run.delivered), len(run.expected))
 }
 
+// TestEventTracker_NeverStoresBlockWithoutHeight covers a node serving getBlock with a null
+// blockHeight. Consumers turn a stored block number into a transaction expiry, so a stored zero
+// makes a transaction built on that blockhash look expired at once, while it can still land.
+func TestEventTracker_NeverStoresBlockWithoutHeight(t *testing.T) {
+	const (
+		// Answers without a height before the node catches up; below the tracker's retry count.
+		transientMisses = 3
+		blocks          = 60
+	)
+
+	cfg := trackertest.DefaultConfig()
+	cfg.HistorySlots = 0
+	cfg.TxEvery = 0 // only the chain head path reads these blocks
+
+	sim := trackertest.NewChainSimulator(t, cfg)
+	genesis := sim.GenesisSlot()
+
+	sim.ProduceSlotsWithBlocks(blocks)
+
+	// Both slots are on the rounding threshold, so the tracker samples them.
+	transientSlot := genesis + 20
+	missingSlot := genesis + 40
+
+	require.NotNil(t, sim.BlockAt(transientSlot))
+	require.NotNil(t, sim.BlockAt(missingSlot))
+	require.Zero(t, transientSlot%defaultBlockRoundingThreshold)
+	require.Zero(t, missingSlot%defaultBlockRoundingThreshold)
+
+	sim.WithholdBlockHeight(transientSlot, transientMisses)
+	sim.WithholdBlockHeight(missingSlot, -1)
+
+	run := newSimRun(t, sim, runConfig{
+		startFromSlot: genesis,
+		rpcLimits:     generousRPCMethodLimits(),
+	})
+
+	run.startTracker()
+
+	require.True(t, run.waitForCondition("the tracker to index past the block without a height",
+		outageTimeout, func() bool {
+			blockPoint, err := run.storage.GetLatestBlockPoint()
+
+			return err == nil && blockPoint != nil && blockPoint.BlockSlot > missingSlot
+		}),
+		"the chain head never moved past slot %d", missingSlot)
+
+	run.stopTracker()
+
+	// A height that shows up on a retry is stored with its real value.
+	transientBlock := sim.BlockAt(transientSlot)
+
+	storedNumber, err := run.storage.GetBlockNumberByBlockhash(transientBlock.Hash)
+	require.NoError(t, err, "the block whose height arrived late was never stored")
+	require.Equal(t, transientBlock.Height, storedNumber)
+
+	// A height that never shows up leaves the block out, rather than storing it as zero.
+	_, err = run.storage.GetBlockNumberByBlockhash(sim.BlockAt(missingSlot).Hash)
+	require.Error(t, err, "a block without a height was stored")
+
+	// Its slot resolves to the sampled block before it, whose height is real.
+	storedHash, err := run.storage.GetBlockhashBySlot(missingSlot)
+	require.NoError(t, err)
+	require.NotEqual(t, sim.BlockAt(missingSlot).Hash, storedHash)
+
+	storedNumber, err = run.storage.GetBlockNumberByBlockhash(storedHash)
+	require.NoError(t, err)
+	require.NotZero(t, storedNumber)
+	require.Less(t, storedNumber, sim.BlockAt(missingSlot).Height)
+
+	require.Contains(t, run.logs.String(), "served it without a block height")
+}
+
 // requireSparseRegionShape checks the scripted history really is the shape the test needs: a
 // handful of blocks at the start of the stretch and nothing for the rest of it.
 func requireSparseRegionShape(t *testing.T, sim *trackertest.ChainSimulator, from, to uint64) {
