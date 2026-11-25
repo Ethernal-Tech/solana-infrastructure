@@ -215,7 +215,7 @@ func newRPCHTTPTransport() *http.Transport {
 		},
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Second, // Force-kill un-responsive handshakes early
+		ResponseHeaderTimeout: 10 * time.Second, // Force-kill un-responsive handshakes early
 		DisableKeepAlives:     false,
 	}
 }
