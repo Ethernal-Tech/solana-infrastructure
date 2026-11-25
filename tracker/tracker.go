@@ -966,7 +966,11 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 			continue
 		}
 
+		heightMissing := false
+
 		block, err := ExecuteWithRetry(ctx, func(ctx context.Context) (*rpc.GetBlockResult, error) {
+			heightMissing = false
+
 			result, err := t.client.GetBlockWithOpts(ctx, slot, &rpc.GetBlockOpts{
 				TransactionDetails:             rpc.TransactionDetailsNone,
 				MaxSupportedTransactionVersion: common.MaxSupportedTransactionVersion(),
@@ -976,9 +980,24 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 				return nil, ErrRetryTryAgain
 			}
 
+			// A node writes the block height apart from the block, so it can serve a block without
+			// one. Consumers derive a transaction's expiry from the stored height, so a block is
+			// only stored once its real height is known.
+			heightMissing = result != nil && result.BlockHeight == nil
+			if heightMissing {
+				return nil, ErrRetryTryAgain
+			}
+
 			return result, nil
 		}, WithRetryCount(10), WithRetryWaitTime(t.pollTime), WithLogger(t.logger))
 		if err != nil {
+			if heightMissing && ctx.Err() == nil {
+				// Leave the slot out: a blockhash lookup for it falls back to the block before it.
+				t.logger.Warn(fmt.Sprintf("Skipping block at slot %d: the node served it without a block height", slot))
+
+				continue
+			}
+
 			t.logger.Warn(fmt.Sprintf("Failed to fetch block at slot %d: %s", slot, err.Error()))
 
 			return 0, fmt.Errorf("no block found at slot %d", slot)
@@ -988,12 +1007,7 @@ func (t *EventTracker) refreshChainHead(ctx context.Context) (idleWait time.Dura
 			return 0, fmt.Errorf("get block returned nil at slot %d", slot)
 		}
 
-		var blockNumber uint64
-		if block.BlockHeight != nil {
-			blockNumber = *block.BlockHeight
-		} else {
-			t.logger.Warn(fmt.Sprintf("No block height found for block at slot %d", slot))
-		}
+		blockNumber := *block.BlockHeight
 
 		bp = store.BlockPoint{
 			BlockSlot:   slot,

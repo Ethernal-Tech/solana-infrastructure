@@ -189,14 +189,21 @@ func (s *ChainSimulator) handleGetBlock(request jsonRPCRequest) (any, error) {
 	blockTime := solana.UnixTimeSeconds(block.blockTime.Unix())
 	height := block.Height
 
-	return rpc.GetBlockResult{
+	result := rpc.GetBlockResult{
 		Blockhash:         block.Hash,
 		PreviousBlockhash: block.parentHash,
 		ParentSlot:        block.parentSlot,
 		Signatures:        block.signatures,
 		BlockTime:         &blockTime,
 		BlockHeight:       &height,
-	}, nil
+	}
+
+	if s.takeWithheldHeight(slot) {
+		// The RPC schema allows a null height; nodes write it apart from the block itself.
+		result.BlockHeight = nil
+	}
+
+	return result, nil
 }
 
 func (s *ChainSimulator) handleGetSignaturesForAddress(request jsonRPCRequest) (any, error) {

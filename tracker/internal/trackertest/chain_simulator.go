@@ -147,6 +147,7 @@ type ChainSimulator struct {
 	forgottenBeforeSlot uint64
 	forgottenSignatures map[solana.Signature]struct{}
 	refusedOnce         map[solana.Signature]struct{}
+	heightWithheld      map[uint64]int
 
 	callCounts       map[string]int
 	signatureQueries []SignatureQuery
@@ -623,6 +624,37 @@ func (s *ChainSimulator) RefuseCursorOnce(signature solana.Signature) {
 	}
 
 	s.refusedOnce[signature] = struct{}{}
+}
+
+// WithholdBlockHeight makes getBlock serve the block at slot without its block height, the
+// way a node does when the height for that slot was not written yet, or never was. times is
+// how many answers lack it; a negative value withholds it for good.
+func (s *ChainSimulator) WithholdBlockHeight(slot uint64, times int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.heightWithheld == nil {
+		s.heightWithheld = make(map[uint64]int)
+	}
+
+	s.heightWithheld[slot] = times
+}
+
+// takeWithheldHeight reports whether this getBlock answer for slot has to lack the block height.
+func (s *ChainSimulator) takeWithheldHeight(slot uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	remaining, ok := s.heightWithheld[slot]
+	if !ok || remaining == 0 {
+		return false
+	}
+
+	if remaining > 0 {
+		s.heightWithheld[slot] = remaining - 1
+	}
+
+	return true
 }
 
 // visibleProgramTxs returns the transactions the node still answers for, in production order.
